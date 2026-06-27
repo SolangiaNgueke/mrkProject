@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Documents de la parcelle — Foncier</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f5f6f8; color: #1f2937; }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px 60px; }
+    .card { background: #fff; border-radius: 12px; padding: 20px 22px; box-shadow: 0 1px 6px rgba(0,0,0,.08); margin-bottom: 18px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    a.back { font-size: 13px; color: #2563eb; text-decoration: none; }
+    button { cursor: pointer; padding: 9px 14px; border: 0; border-radius: 7px; font-size: 14px; }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-ghost { background: #eef; color: #2563eb; }
+    input[type=file] { display: block; margin: 12px 0; }
+    fieldset { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 14px; margin: 0 0 6px; }
+    legend { font-size: 13px; color: #555; padding: 0 6px; }
+    fieldset label { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 14px; cursor: pointer; }
+    .hint { font-size: 13px; color: #555; }
+    .warn { color: #b91c1c; font-weight: 600; }
+    .ok { color: #15803d; font-weight: 600; }
+    .doc-row { display: flex; align-items: center; justify-content: space-between;
+               gap: 12px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+    .doc-row code { font-size: 12px; color: #6b7280; }
+    #msg { margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="index.html">← Retour à la carte</a>
+
+    <div class="card">
+      <h1>Documents — parcelle #<span id="pid">?</span></h1>
+      <p class="hint">Pièces confidentielles (titre, acte, plan…). Visibles uniquement
+        par toi (le propriétaire) et les vérificateurs. Jamais publiques.</p>
+    </div>
+
+    <div class="card" id="formCard">
+      <h2>Ajouter un document</h2>
+      <fieldset>
+        <legend>Type de document</legend>
+        <label><input type="radio" name="doc-type" value="title" checked> Titre foncier</label>
+        <label><input type="radio" name="doc-type" value="deed"> Acte de vente</label>
+        <label><input type="radio" name="doc-type" value="plan"> Plan / bornage</label>
+        <label><input type="radio" name="doc-type" value="id"> Pièce d'identité</label>
+        <label><input type="radio" name="doc-type" value="other"> Autre</label>
+      </fieldset>
+      <input id="doc-file" type="file" />
+      <button class="btn-primary" onclick="uploadDocument()">Ajouter le document</button>
+      <div id="msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Documents enregistrés</h2>
+      <div id="doc-list"><span class="hint">Chargement…</span></div>
+    </div>
+  </div>
+
+  <script>
+    const API_ROOT = "http://localhost:8000/api/";
+    const API = API_ROOT + "parcelles/";
+    const token = localStorage.getItem("foncier_token");
+
+    // Récupère l'id de parcelle depuis l'URL : documents.html?parcelle=9
+    const params = new URLSearchParams(window.location.search);
+    const parcelId = params.get("parcelle");
+    document.getElementById("pid").textContent = parcelId || "?";
+
+    function authHeaders() {
+      const h = {};
+      if (token) h["Authorization"] = "Token " + token;
+      return h;
+    }
+    function setMsg(text, cls) {
+      const el = document.getElementById("msg");
+      el.textContent = text;
+      el.className = cls || "hint";
+    }
+    function selectedType() {
+      return document.querySelector('input[name="doc-type"]:checked').value;
+    }
+
+    if (!token) {
+      document.getElementById("formCard").innerHTML =
+        "<p class='warn'>Tu n'es pas connecté. Retourne à la carte pour te connecter.</p>";
+    } else if (!parcelId) {
+      setMsg("Aucune parcelle indiquée dans l'adresse.", "warn");
+    }
+
+    async function uploadDocument() {
+      if (!parcelId) { setMsg("Aucune parcelle indiquée.", "warn"); return; }
+      const fileInput = document.getElementById("doc-file");
+      if (!fileInput.files.length) { setMsg("Choisis un fichier à joindre.", "warn"); return; }
+      const fd = new FormData();
+      fd.append("file", fileInput.files[0]);
+      fd.append("doc_type", selectedType());
+      try {
+        const res = await fetch(`${API}${parcelId}/documents/`, {
+          method: "POST", headers: authHeaders(), body: fd
+        });
+        if (res.status === 403) { setMsg("Accès refusé : seul le propriétaire peut ajouter.", "warn"); return; }
+        const d = await res.json();
+        if (!res.ok) { setMsg("Erreur : " + JSON.stringify(d), "warn"); return; }
+        setMsg("Document ajouté (intégrité garantie par hash SHA-256).", "ok");
+        fileInput.value = "";
+        loadDocuments();
+      } catch (err) { setMsg("Erreur réseau : " + err, "warn"); }
+    }
+
+    async function loadDocuments() {
+      if (!parcelId || !token) return;
+      const list = document.getElementById("doc-list");
+      try {
+        const res = await fetch(`${API}${parcelId}/documents/`, { headers: authHeaders() });
+        if (res.status === 403) { list.innerHTML = "<span class='warn'>Accès refusé à ces documents.</span>"; return; }
+        if (!res.ok) { list.innerHTML = "<span class='warn'>Impossible de charger les documents.</span>"; return; }
+        const docs = await res.json();
+        if (!docs.length) { list.innerHTML = "<span class='hint'>Aucun document pour le moment.</span>"; return; }
+        const labels = { title: "Titre foncier", deed: "Acte de vente", plan: "Plan / bornage", id: "Pièce d'identité", other: "Autre" };
+        list.innerHTML = "";
+        docs.forEach(doc => {
+          const row = document.createElement("div");
+          row.className = "doc-row";
+          const left = document.createElement("div");
+          left.innerHTML = `📄 <b>${labels[doc.doc_type] || doc.doc_type}</b><br><code>${doc.sha256.slice(0, 16)}…</code>`;
+          const btn = document.createElement("button");
+          btn.className = "btn-ghost";
+          btn.textContent = "Télécharger";
+          btn.onclick = () => downloadDocument(doc.id);
+          row.appendChild(left);
+          row.appendChild(btn);
+          list.appendChild(row);
+        });
+      } catch (err) { list.innerHTML = "<span class='warn'>Erreur réseau.</span>"; }
+    }
+
+    async function downloadDocument(docId) {
+      try {
+        const res = await fetch(`${API}${parcelId}/documents/${docId}/download/`, { headers: authHeaders() });
+        if (!res.ok) { setMsg("Téléchargement refusé.", "warn"); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank");
+      } catch (err) { setMsg("Erreur réseau : " + err, "warn"); }
+    }
+
+    loadDocuments();
+  </script>
+</body>
+</html>

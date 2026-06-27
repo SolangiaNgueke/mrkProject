@@ -59,6 +59,16 @@
         <button class="btn-ghost" onclick="resetDraw()">Effacer</button>
         <button class="btn-primary" onclick="saveParcelle()">Enregistrer</button>
       </div>
+
+      <!-- Documents : géré sur une page dédiée (ouverte dans un autre onglet) -->
+      <div id="docsBox" class="hidden">
+        <div class="sep"></div>
+        <h2>Documents — parcelle #<span id="docs-parcel-id"></span></h2>
+        <p class="hint">Pièces confidentielles (titre, acte…), visibles uniquement
+          par toi et les vérificateurs.</p>
+        <button class="btn-primary" onclick="openDocsPage()">Gérer les documents ↗</button>
+      </div>
+
       <div class="sep"></div>
       <button class="btn-ghost" onclick="logout()">Se déconnecter</button>
     </div>
@@ -73,6 +83,7 @@
 
     // --- Gestion du token (persisté pour ne pas se reconnecter à chaque rechargement) ---
     let token = localStorage.getItem("foncier_token");
+    let lastParcelId = null;  // dernière parcelle enregistrée (pour y attacher des documents)
 
     function authHeaders() {
       const h = { "Content-Type": "application/json" };
@@ -249,6 +260,9 @@
         setMsg(txt, d.overlap_count > 0 ? "warn" : "ok");
         resetDraw();
         loadParcelles();
+        lastParcelId = d.id;          // on mémorise la parcelle créée
+        showDocsPanel();              // et on affiche la zone documents
+        loadDocuments();
       } catch (err) { setMsg("Erreur réseau : " + err, "warn"); }
     }
 
@@ -265,6 +279,20 @@
       el.textContent = text;
       el.className = cls || "hint";
     }
+
+    // --- Documents : sur une page dédiée (autre onglet) ---
+    function showDocsPanel() {
+      document.getElementById("docsBox").classList.remove("hidden");
+      document.getElementById("docs-parcel-id").textContent = lastParcelId;
+    }
+
+    function openDocsPage() {
+      if (!lastParcelId) { setMsg("Enregistre d'abord une parcelle.", "warn"); return; }
+      // Ouvre la page documents dans un nouvel onglet (le token est partagé via localStorage).
+      window.open(`documents.html?parcelle=${lastParcelId}`, "_blank");
+    }
+
+    function loadDocuments() { /* géré sur la page dédiée */ }
 
     checkSession();  // au chargement : restaure la session si un token existe
   </script>

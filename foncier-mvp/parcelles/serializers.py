@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from rest_framework_gis.serializers import GeoFeatureModelSerializer
 
-from .models import Parcelle
+from .models import Document, Parcelle
 
 
 class ParcellePublicSerializer(GeoFeatureModelSerializer):
@@ -32,3 +32,24 @@ class OverlapSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     name = serializers.CharField()
     status = serializers.CharField()
+
+
+class DocumentSerializer(serializers.ModelSerializer):
+    """Document justificatif CONFIDENTIEL.
+
+    Le fichier (`file`) est en écriture seule : on ne renvoie jamais le chemin
+    brut du média. Le téléchargement se fait via une route protégée (download_url).
+    """
+
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Document
+        fields = ["id", "doc_type", "file", "sha256", "created_at", "download_url"]
+        read_only_fields = ["sha256", "created_at"]
+        extra_kwargs = {"file": {"write_only": True}}
+
+    def get_download_url(self, obj):
+        request = self.context.get("request")
+        path = f"/api/parcelles/{obj.parcelle_id}/documents/{obj.id}/download/"
+        return request.build_absolute_uri(path) if request else path
