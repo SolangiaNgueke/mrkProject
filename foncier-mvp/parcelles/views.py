@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .models import Parcelle
+from .permissions import IsOwnerOrStaffOrReadOnly
 from .serializers import (
     OverlapSerializer,
     ParcelleCreateSerializer,
@@ -20,6 +21,7 @@ class ParcelleViewSet(viewsets.ModelViewSet):
     """
 
     queryset = Parcelle.objects.all().order_by("-created_at")
+    permission_classes = [IsOwnerOrStaffOrReadOnly]
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -29,7 +31,8 @@ class ParcelleViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = ParcelleCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        parcelle = serializer.save()  # surface_m2 calculée dans Model.save()
+        # La parcelle est automatiquement rattachée à l'utilisateur connecté.
+        parcelle = serializer.save(owner=request.user)  # surface_m2 calculée dans Model.save()
 
         overlaps = parcelle.overlapping()
         data = ParcellePublicSerializer(parcelle).data

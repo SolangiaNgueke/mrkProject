@@ -18,6 +18,7 @@ INSTALLED_APPS = [
     "django.contrib.gis",
     # 3rd party
     "rest_framework",
+    "rest_framework.authtoken",
     "rest_framework_gis",
     "corsheaders",
     # apps du projet
@@ -80,8 +81,14 @@ MEDIA_ROOT = BASE_DIR / "media"  # PROTOTYPE: en production -> stockage objet S3
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
-    # PROTOTYPE: ouvert. Étape suivante = authentification + RBAC par rôle.
-    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    # Lecture (GET) ouverte à tous ; écriture réservée aux utilisateurs connectés.
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticatedOrReadOnly",
+    ],
 }
 
 # CORS : autorise la page carte servie en local à appeler l'API

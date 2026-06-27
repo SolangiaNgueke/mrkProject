@@ -18,32 +18,125 @@
     button { cursor: pointer; padding: 8px 10px; border: 0; border-radius: 6px; font-size: 13px; }
     .btn-primary { background: #2563eb; color: #fff; }
     .btn-ghost { background: #eef; color: #2563eb; }
-    input { width: 100%; padding: 6px; margin: 6px 0 10px; box-sizing: border-box; }
+    input { width: 100%; padding: 6px; margin: 6px 0; box-sizing: border-box; }
     #msg { font-size: 13px; margin-top: 10px; white-space: pre-wrap; }
     .warn { color: #b91c1c; font-weight: 600; }
     .ok { color: #15803d; font-weight: 600; }
     .hint { font-size: 12px; color: #555; }
+    .sep { border-top: 1px solid #eee; margin: 12px 0; }
+    #userbar { font-size: 13px; margin-bottom: 8px; }
+    #userbar b { color: #15803d; }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <div id="panel">
-    <h2>Enregistrer une parcelle</h2>
-    <p class="hint">1) Clique sur la carte pour poser les coins du terrain.<br>
-       2) Clique « Terminer le tracé ».<br>
-       3) Donne un nom et enregistre.</p>
-    <input id="name" type="text" placeholder="Nom / référence du terrain" />
-    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-      <button class="btn-ghost" onclick="startDraw()">Tracer</button>
-      <button class="btn-ghost" onclick="finishDraw()">Terminer le tracé</button>
-      <button class="btn-ghost" onclick="resetDraw()">Effacer</button>
-      <button class="btn-primary" onclick="saveParcelle()">Enregistrer</button>
+
+    <!-- Bloc connexion (affiché si NON connecté) -->
+    <div id="authBox">
+      <h2>Connexion</h2>
+      <input id="login-username" type="text" placeholder="Nom d'utilisateur" />
+      <input id="login-password" type="password" placeholder="Mot de passe" />
+      <div style="display:flex; gap:8px;">
+        <button class="btn-primary" onclick="login()">Se connecter</button>
+        <button class="btn-ghost" onclick="register()">Créer un compte</button>
+      </div>
+      <p class="hint">Crée un compte (citoyen) ou connecte-toi avec ton compte admin.</p>
     </div>
+
+    <!-- Bloc parcelle (affiché si connecté) -->
+    <div id="parcelBox" class="hidden">
+      <div id="userbar"></div>
+      <h2>Enregistrer une parcelle</h2>
+      <p class="hint">1) Clique sur la carte pour poser les coins du terrain.<br>
+         2) Clique « Terminer le tracé ».<br>
+         3) Donne un nom et enregistre.</p>
+      <input id="name" type="text" placeholder="Nom / référence du terrain" />
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn-ghost" onclick="startDraw()">Tracer</button>
+        <button class="btn-ghost" onclick="finishDraw()">Terminer le tracé</button>
+        <button class="btn-ghost" onclick="resetDraw()">Effacer</button>
+        <button class="btn-primary" onclick="saveParcelle()">Enregistrer</button>
+      </div>
+      <div class="sep"></div>
+      <button class="btn-ghost" onclick="logout()">Se déconnecter</button>
+    </div>
+
     <div id="msg" class="hint"></div>
   </div>
 
   <script>
-    const API = "http://localhost:8000/api/parcelles/";
+    const API_ROOT = "http://localhost:8000/api/";
+    const API = API_ROOT + "parcelles/";
+    const AUTH = API_ROOT + "auth/";
+
+    // --- Gestion du token (persisté pour ne pas se reconnecter à chaque rechargement) ---
+    let token = localStorage.getItem("foncier_token");
+
+    function authHeaders() {
+      const h = { "Content-Type": "application/json" };
+      if (token) h["Authorization"] = "Token " + token;
+      return h;
+    }
+
+    function showLoggedIn(user) {
+      document.getElementById("authBox").classList.add("hidden");
+      document.getElementById("parcelBox").classList.remove("hidden");
+      document.getElementById("userbar").innerHTML =
+        `Connecté : <b>${user.username}</b> (${user.role_display})`;
+    }
+    function showLoggedOut() {
+      document.getElementById("authBox").classList.remove("hidden");
+      document.getElementById("parcelBox").classList.add("hidden");
+    }
+
+    async function register() {
+      const username = document.getElementById("login-username").value.trim();
+      const password = document.getElementById("login-password").value;
+      if (!username || !password) { setMsg("Renseigne un nom d'utilisateur et un mot de passe (8 caractères min).", "warn"); return; }
+      try {
+        const res = await fetch(AUTH + "register/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password })
+        });
+        const d = await res.json();
+        if (!res.ok) { setMsg("Inscription refusée : " + JSON.stringify(d), "warn"); return; }
+        token = d.token; localStorage.setItem("foncier_token", token);
+        showLoggedIn(d.user);
+        setMsg("Compte créé. Tu es connecté.", "ok");
+      } catch (err) { setMsg("Erreur réseau : " + err, "warn"); }
+    }
+
+    async function login() {
+      const username = document.getElementById("login-username").value.trim();
+      const password = document.getElementById("login-password").value;
+      try {
+        const res = await fetch(AUTH + "login/", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password })
+        });
+        const d = await res.json();
+        if (!res.ok) { setMsg("Identifiants incorrects.", "warn"); return; }
+        token = d.token; localStorage.setItem("foncier_token", token);
+        showLoggedIn(d.user);
+        setMsg("Connecté.", "ok");
+      } catch (err) { setMsg("Erreur réseau : " + err, "warn"); }
+    }
+
+    function logout() {
+      token = null; localStorage.removeItem("foncier_token");
+      showLoggedOut(); setMsg("Déconnecté.", "");
+    }
+
+    async function checkSession() {
+      if (!token) { showLoggedOut(); return; }
+      try {
+        const res = await fetch(AUTH + "me/", { headers: authHeaders() });
+        if (res.ok) { showLoggedIn(await res.json()); }
+        else { logout(); }
+      } catch (err) { showLoggedOut(); }
+    }
 
     // --- Carte avec imagerie satellite (Esri World Imagery, à usage prototype) ---
     const map = new maplibregl.Map({
@@ -60,25 +153,23 @@
         },
         layers: [{ id: "satellite", type: "raster", source: "satellite" }]
       },
-      center: [1.2, 6.13],  // Lomé, Togo — adapte à ta zone
+      center: [1.2, 6.13],  // Lomé, Togo
       zoom: 16
     });
 
-    // --- État du tracé en cours ---
     let drawing = false;
-    let points = [];   // [ [lng, lat], ... ]
+    let points = [];
 
     map.on("load", () => {
-      // Couche des parcelles existantes (depuis l'API)
       map.addSource("parcelles", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({
         id: "parcelles-fill", type: "fill", source: "parcelles",
         paint: {
           "fill-color": [
             "match", ["get", "status"],
-            "validated", "#22c55e",   // vert
-            "disputed", "#ef4444",    // rouge
-            "#f59e0b"                 // orange (en cours / autre)
+            "validated", "#22c55e",
+            "disputed", "#ef4444",
+            "#f59e0b"
           ],
           "fill-opacity": 0.45
         }
@@ -87,18 +178,9 @@
         id: "parcelles-line", type: "line", source: "parcelles",
         paint: { "line-color": "#fff", "line-width": 1.5 }
       });
-
-      // Couche du tracé en cours
       map.addSource("draft", { type: "geojson", data: emptyFC() });
-      map.addLayer({
-        id: "draft-fill", type: "fill", source: "draft",
-        paint: { "fill-color": "#2563eb", "fill-opacity": 0.3 }
-      });
-      map.addLayer({
-        id: "draft-line", type: "line", source: "draft",
-        paint: { "line-color": "#2563eb", "line-width": 2 }
-      });
-
+      map.addLayer({ id: "draft-fill", type: "fill", source: "draft", paint: { "fill-color": "#2563eb", "fill-opacity": 0.3 } });
+      map.addLayer({ id: "draft-line", type: "line", source: "draft", paint: { "line-color": "#2563eb", "line-width": 2 } });
       loadParcelles();
     });
 
@@ -112,20 +194,15 @@
 
     function renderDraft(closed) {
       let coords = points.slice();
-      let geomType = "LineString";
       let data;
       if (closed && coords.length >= 3) {
-        coords = coords.concat([coords[0]]); // ferme l'anneau
+        coords = coords.concat([coords[0]]);
         data = { type: "FeatureCollection", features: [
-          { type: "Feature", geometry: { type: "Polygon", coordinates: [coords] }, properties: {} }
-        ]};
+          { type: "Feature", geometry: { type: "Polygon", coordinates: [coords] }, properties: {} } ]};
       } else if (coords.length >= 2) {
         data = { type: "FeatureCollection", features: [
-          { type: "Feature", geometry: { type: "LineString", coordinates: coords }, properties: {} }
-        ]};
-      } else {
-        data = emptyFC();
-      }
+          { type: "Feature", geometry: { type: "LineString", coordinates: coords }, properties: {} } ]};
+      } else { data = emptyFC(); }
       map.getSource("draft").setData(data);
     }
 
@@ -144,9 +221,10 @@
     async function checkOverlap() {
       try {
         const res = await fetch(API + "check_overlap/", {
-          method: "POST", headers: { "Content-Type": "application/json" },
+          method: "POST", headers: authHeaders(),
           body: JSON.stringify({ geometry: currentPolygon() })
         });
+        if (res.status === 401) { setMsg("Connecte-toi d'abord.", "warn"); return; }
         const d = await res.json();
         if (d.overlap_count > 0) {
           const names = d.overlaps.map(o => `#${o.id} ${o.name} (${o.status})`).join("\n");
@@ -160,16 +238,10 @@
     async function saveParcelle() {
       if (points.length < 3) { setMsg("Trace d'abord une parcelle (3 points min).", "warn"); return; }
       const name = document.getElementById("name").value.trim() || "Sans nom";
-      const feature = {
-        type: "Feature",
-        geometry: currentPolygon(),
-        properties: { name: name }
-      };
+      const feature = { type: "Feature", geometry: currentPolygon(), properties: { name } };
       try {
-        const res = await fetch(API, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(feature)
-        });
+        const res = await fetch(API, { method: "POST", headers: authHeaders(), body: JSON.stringify(feature) });
+        if (res.status === 401) { setMsg("Tu dois être connecté pour enregistrer.", "warn"); return; }
         const d = await res.json();
         if (!res.ok) { setMsg("Erreur : " + JSON.stringify(d), "warn"); return; }
         let txt = `Parcelle #${d.id} enregistrée. Surface ≈ ${Math.round(d.properties.surface_m2)} m².`;
@@ -182,8 +254,8 @@
 
     async function loadParcelles() {
       try {
-        const res = await fetch(API);
-        const data = await res.json(); // FeatureCollection
+        const res = await fetch(API);  // lecture publique, sans token
+        const data = await res.json();
         map.getSource("parcelles").setData(data);
       } catch (err) { console.error(err); }
     }
@@ -193,6 +265,8 @@
       el.textContent = text;
       el.className = cls || "hint";
     }
+
+    checkSession();  // au chargement : restaure la session si un token existe
   </script>
 </body>
 </html>
