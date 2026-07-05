@@ -82,6 +82,14 @@ class Delimitation(models.Model):
     surveyor = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="delimitations"
     )
+    # Tracé corrigé/validé par le géomètre. Devient le tracé officiel de la
+    # parcelle une fois la vérification approuvée (cf. signals.py).
+    validated_geometry = gis_models.PolygonField(srid=4326, null=True, blank=True)
+    # Points de bornage saisis (tableau B1, B2… avec X/Y dans le système source),
+    # conservés pour la traçabilité.
+    boundary_points = models.JSONField(null=True, blank=True)
+    # Code EPSG du système de coordonnées d'origine du plan (ex. 32631 = UTM 31N/WGS84).
+    source_epsg = models.PositiveIntegerField(null=True, blank=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

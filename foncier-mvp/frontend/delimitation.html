@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Délimitation par coordonnées — Géomètre</title>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f5f6f8; color: #1f2937; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px 60px; }
+    .card { background: #fff; border-radius: 12px; padding: 20px 22px; box-shadow: 0 1px 6px rgba(0,0,0,.08); margin-bottom: 18px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    a.back { font-size: 13px; color: #2563eb; text-decoration: none; }
+    button { cursor: pointer; padding: 9px 14px; border: 0; border-radius: 7px; font-size: 14px; }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-ghost { background: #eef; color: #2563eb; }
+    label { font-size: 13px; color: #555; display: block; margin-bottom: 4px; }
+    input { padding: 7px; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box; }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+    th, td { padding: 6px; text-align: left; font-size: 14px; }
+    th { color: #6b7280; font-weight: 600; }
+    td input { width: 100%; }
+    .row-x input { width: 46%; }
+    .hint { font-size: 13px; color: #555; }
+    .warn { color: #b91c1c; font-weight: 600; }
+    .ok { color: #15803d; font-weight: 600; }
+    #map { height: 320px; border-radius: 10px; margin-top: 10px; }
+    .epsg-line { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+    #msg { margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="index.html">← Retour à la carte</a>
+
+    <div class="card">
+      <h1>Délimitation — parcelle #<span id="pid">?</span></h1>
+      <p class="hint">Saisis les points de bornage du plan (X = Est, Y = Nord).
+        Le système reconstruit le polygone et le reprojette automatiquement sur la carte.</p>
+    </div>
+
+    <div class="card" id="formCard">
+      <h2>Système de coordonnées</h2>
+      <div class="epsg-line">
+        <div>
+          <label>Code EPSG (source du plan)</label>
+          <input id="epsg" type="number" style="width:140px" placeholder="ex. 32631" />
+        </div>
+        <div class="hint" id="crs-suggestion">Détection de la zone en cours…</div>
+      </div>
+
+      <h2 style="margin-top:18px;">Points de bornage</h2>
+      <table id="pts">
+        <thead>
+          <tr><th style="width:22%">Point</th><th style="width:33%">X (Est)</th><th style="width:33%">Y (Nord)</th><th></th></tr>
+        </thead>
+        <tbody id="pts-body"></tbody>
+      </table>
+      <button class="btn-ghost" onclick="addRow()">+ Ajouter un point</button>
+      <button class="btn-primary" onclick="computePolygon()">Calculer &amp; prévisualiser</button>
+      <div id="msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Aperçu du tracé reprojeté</h2>
+      <div id="result" class="hint">Le tracé apparaîtra ici après calcul.</div>
+      <div id="map"></div>
+    </div>
+  </div>
+
+  <script>
+    const API_ROOT = "http://localhost:8000/api/";
+    const API = API_ROOT + "parcelles/";
+    const token = localStorage.getItem("foncier_token");
+
+    const params = new URLSearchParams(window.location.search);
+    const parcelId = params.get("parcelle");
+    document.getElementById("pid").textContent = parcelId || "?";
+
+    function authHeaders() {
+      const h = { "Content-Type": "application/json" };
+      if (token) h["Authorization"] = "Token " + token;
+      return h;
+    }
+    function setMsg(t, c) {
+      const el = document.getElementById("msg");
+      el.textContent = t; el.className = c || "hint";
+    }
+
+    // --- Tableau de points éditable ---
+    function addRow(name = "", x = "", y = "") {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        `<td><input value="${name}" placeholder="B1"></td>
+         <td><input type="number" step="any" value="${x}" placeholder="Est"></td>
+         <td><input type="number" step="any" value="${y}" placeholder="Nord"></td>
+         <td><button class="btn-ghost" onclick="this.closest('tr').remove()">✕</button></td>`;
+      document.getElementById("pts-body").appendChild(tr);
+    }
+    // 4 lignes par défaut (B1..B4)
+    ["B1", "B2", "B3", "B4"].forEach(n => addRow(n));
+
+    function readPoints() {
+      const rows = document.querySelectorAll("#pts-body tr");
+      const pts = [];
+      rows.forEach(r => {
+        const [name, x, y] = r.querySelectorAll("input");
+        if (x.value !== "" && y.value !== "") {
+          pts.push({ name: name.value || null, x: parseFloat(x.value), y: parseFloat(y.value) });
+        }
+      });
+      return pts;
+    }
+
+    // --- Suggestion automatique du système de coordonnées ---
+    async function loadSuggestion() {
+      if (!token) { document.getElementById("crs-suggestion").innerHTML =
+        "<span class='warn'>Non connecté — connecte-toi sur la carte.</span>"; return; }
+      try {
+        const res = await fetch(`${API}${parcelId}/suggest_crs/`, { headers: authHeaders() });
+        if (res.status === 403) { document.getElementById("crs-suggestion").innerHTML =
+          "<span class='warn'>Réservé au géomètre.</span>"; return; }
+        if (!res.ok) return;
+        const d = await res.json();
+        document.getElementById("epsg").value = d.suggested_epsg;
+        document.getElementById("crs-suggestion").innerHTML =
+          `Zone détectée : <b>UTM ${d.utm_zone}</b> → EPSG <b>${d.suggested_epsg}</b> (modifiable si ton plan diffère).`;
+      } catch (e) { /* silencieux */ }
+    }
+
+    // --- Calcul + prévisualisation ---
+    async function computePolygon() {
+      const pts = readPoints();
+      const epsg = document.getElementById("epsg").value;
+      if (pts.length < 3) { setMsg("Il faut au moins 3 points valides.", "warn"); return; }
+      if (!epsg) { setMsg("Indique le code EPSG.", "warn"); return; }
+      try {
+        const res = await fetch(`${API}${parcelId}/delimitation_from_points/`, {
+          method: "POST", headers: authHeaders(),
+          body: JSON.stringify({ source_epsg: parseInt(epsg), points: pts })
+        });
+        const d = await res.json();
+        if (!res.ok) { setMsg("Erreur : " + (d.detail || JSON.stringify(d)), "warn"); return; }
+        setMsg("Délimitation enregistrée. La parcelle passe en vérification.", "ok");
+        document.getElementById("result").innerHTML =
+          `Surface calculée ≈ <b>${Math.round(d.surface_m2)} m²</b> (${(d.surface_m2/10000).toFixed(2)} ha).`;
+        showOnMap(d.geometry);
+      } catch (e) { setMsg("Erreur réseau : " + e, "warn"); }
+    }
+
+    // --- Carte d'aperçu (satellite) ---
+    let map;
+    function initMap() {
+      map = new maplibregl.Map({
+        container: "map",
+        style: { version: 8,
+          sources: { sat: { type: "raster",
+            tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+            tileSize: 256, attribution: "Imagery © Esri" } },
+          layers: [{ id: "sat", type: "raster", source: "sat" }] },
+        center: [1.2, 6.13], zoom: 14
+      });
+    }
+    function showOnMap(geometry) {
+      const fc = { type: "FeatureCollection", features: [{ type: "Feature", geometry, properties: {} }] };
+      if (map.getSource("poly")) { map.getSource("poly").setData(fc); }
+      else {
+        map.addSource("poly", { type: "geojson", data: fc });
+        map.addLayer({ id: "poly-fill", type: "fill", source: "poly", paint: { "fill-color": "#22c55e", "fill-opacity": .4 } });
+        map.addLayer({ id: "poly-line", type: "line", source: "poly", paint: { "line-color": "#fff", "line-width": 2 } });
+      }
+      // recentre la carte sur le polygone
+      const coords = geometry.coordinates[0];
+      const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
+      map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 40 });
+    }
+
+    initMap();
+    loadSuggestion();
+  </script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import hashlib
+import json
 
 from django.contrib.gis.geos import GEOSGeometry
 from django.http import FileResponse, Http404
@@ -7,7 +8,8 @@ from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
-from .models import Document, Parcelle
+from .geo import polygon_from_points, suggest_utm_epsg, utm_zone_label
+from .models import Delimitation, Document, Parcelle
 from .permissions import IsOwnerOrStaffOrReadOnly
 from .serializers import (
     DocumentSerializer,
@@ -174,3 +176,75 @@ class ParcelleViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Accès refusé."}, status=status.HTTP_403_FORBIDDEN)
         filename = doc.file.name.split("/")[-1]
         return FileResponse(doc.file.open("rb"), as_attachment=True, filename=filename)
+
+    # ------------------------------------------------------------------ #
+    #  Délimitation par coordonnées (géomètre)                            #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _is_surveyor(user):
+        return bool(
+            user
+            and user.is_authenticated
+            and (user.is_superuser or user.role in (user.Role.SURVEYOR, user.Role.ADMIN))
+        )
+
+    @action(detail=True, methods=["get"], url_path="suggest_crs")
+    def suggest_crs(self, request, pk=None):
+        """Propose automatiquement le système de coordonnées adapté à la
+        localité de la parcelle (s'adapte à n'importe quelle région)."""
+        if not self._is_surveyor(request.user):
+            return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
+        parcelle = self.get_object()
+        c = parcelle.geometry.centroid
+        return Response(
+            {
+                "suggested_epsg": suggest_utm_epsg(c.x, c.y),
+                "utm_zone": utm_zone_label(c.x, c.y),
+                "lon": round(c.x, 6),
+                "lat": round(c.y, 6),
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="delimitation_from_points")
+    def delimitation_from_points(self, request, pk=None):
+        """Construit la délimitation du géomètre à partir d'un tableau de points
+        (X/Y dans le système `source_epsg`), reprojetée en WGS84."""
+        if not self._is_surveyor(request.user):
+            return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
+        parcelle = self.get_object()
+
+        source_epsg = request.data.get("source_epsg")
+        points = request.data.get("points")
+        if not source_epsg or not points:
+            return Response(
+                {"detail": "Champs 'source_epsg' et 'points' requis."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            poly = polygon_from_points(points, source_epsg)
+        except Exception as exc:  # noqa: BLE001
+            return Response(
+                {"detail": f"Coordonnées invalides : {exc}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Crée ou met à jour la délimitation (déclenche le signal de statut).
+        delim, _ = Delimitation.objects.update_or_create(
+            parcelle=parcelle,
+            defaults={
+                "surveyor": request.user,
+                "validated_geometry": poly,
+                "boundary_points": points,
+                "source_epsg": int(source_epsg),
+            },
+        )
+        surface = round(poly.transform(6933, clone=True).area, 2)
+        return Response(
+            {
+                "delimitation_id": delim.id,
+                "geometry": json.loads(poly.geojson),
+                "surface_m2": surface,
+            },
+            status=status.HTTP_201_CREATED,
+        )
