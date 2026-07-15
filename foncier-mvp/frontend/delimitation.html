@@ -42,7 +42,15 @@
     </div>
 
     <div class="card" id="formCard">
-      <h2>Système de coordonnées</h2>
+      <h2>Pré-remplir depuis un plan (OCR)</h2>
+      <p class="hint">Facultatif : téléverse une photo/scan du plan pour lire
+        automatiquement le tableau de points. <b>Vérifie et corrige toujours</b>
+        ce que l'OCR a lu.</p>
+      <input id="plan-file" type="file" accept="image/*" />
+      <button class="btn-ghost" onclick="runOcr()">Lire le plan (OCR)</button>
+      <div id="ocr-msg" class="hint"></div>
+
+      <h2 style="margin-top:20px;">Système de coordonnées</h2>
       <div class="epsg-line">
         <div>
           <label>Code EPSG (source du plan)</label>
@@ -175,6 +183,36 @@
       const coords = geometry.coordinates[0];
       const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
       map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 40 });
+    }
+
+    // --- OCR : lit le plan et pré-remplit le tableau ---
+    function fillTable(points) {
+      document.getElementById("pts-body").innerHTML = "";
+      points.forEach((p, i) => addRow(p.name || ("B" + (i + 1)), p.x ?? "", p.y ?? ""));
+      if (!points.length) addRow("B1");
+    }
+
+    async function runOcr() {
+      const fileInput = document.getElementById("plan-file");
+      const el = document.getElementById("ocr-msg");
+      if (!fileInput.files.length) { el.textContent = "Choisis d'abord une image du plan."; el.className = "warn"; return; }
+      el.textContent = "Lecture en cours…"; el.className = "hint";
+      const fd = new FormData();
+      fd.append("file", fileInput.files[0]);
+      const headers = {};
+      if (token) headers["Authorization"] = "Token " + token;
+      try {
+        const res = await fetch(`${API}${parcelId}/ocr_plan/`, { method: "POST", headers, body: fd });
+        const d = await res.json();
+        if (!res.ok) { el.textContent = "OCR : " + (d.detail || "erreur"); el.className = "warn"; return; }
+        if (d.count === 0) {
+          el.textContent = "Aucun point détecté automatiquement — saisis-les à la main.";
+          el.className = "warn";
+          return;
+        }
+        fillTable(d.points);
+        el.innerHTML = `<span class="ok">${d.count} point(s) détecté(s).</span> Vérifie et corrige avant de calculer.`;
+      } catch (e) { el.textContent = "Erreur réseau : " + e; el.className = "warn"; }
     }
 
     initMap();

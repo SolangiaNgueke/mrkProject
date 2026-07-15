@@ -25,6 +25,10 @@
                gap: 12px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
     .doc-row code { font-size: 12px; color: #6b7280; }
     #msg { margin-top: 12px; }
+    .doc-form { width: 100%; border-collapse: collapse; }
+    .doc-form td { padding: 8px 6px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+    .doc-form .t-label { font-weight: 600; font-size: 14px; width: 38%; }
+    .doc-form input[type=file] { font-size: 13px; }
   </style>
 </head>
 <body>
@@ -38,17 +42,19 @@
     </div>
 
     <div class="card" id="formCard">
-      <h2>Ajouter un document</h2>
-      <fieldset>
-        <legend>Type de document</legend>
-        <label><input type="radio" name="doc-type" value="title" checked> Titre foncier</label>
-        <label><input type="radio" name="doc-type" value="deed"> Acte de vente</label>
-        <label><input type="radio" name="doc-type" value="plan"> Plan / bornage</label>
-        <label><input type="radio" name="doc-type" value="id"> Pièce d'identité</label>
-        <label><input type="radio" name="doc-type" value="other"> Autre</label>
-      </fieldset>
-      <input id="doc-file" type="file" />
-      <button class="btn-primary" onclick="uploadDocument()">Ajouter le document</button>
+      <h2>Ajouter des documents</h2>
+      <p class="hint">Pour chaque type, tu peux joindre jusqu'à <b>2 fichiers</b>.
+        Renseigne ceux que tu as, puis clique une seule fois sur « Ajouter les documents ».</p>
+      <table class="doc-form">
+        <tbody>
+          <tr><td class="t-label">Titre foncier</td><td><input type="file" data-type="title" multiple></td></tr>
+          <tr><td class="t-label">Acte de vente</td><td><input type="file" data-type="deed" multiple></td></tr>
+          <tr><td class="t-label">Plan / bornage</td><td><input type="file" data-type="plan" multiple></td></tr>
+          <tr><td class="t-label">Pièce d'identité</td><td><input type="file" data-type="id" multiple></td></tr>
+          <tr><td class="t-label">Autre</td><td><input type="file" data-type="other" multiple></td></tr>
+        </tbody>
+      </table>
+      <button class="btn-primary" onclick="uploadDocuments()">Ajouter les documents</button>
       <div id="msg"></div>
     </div>
 
@@ -78,10 +84,6 @@
       el.textContent = text;
       el.className = cls || "hint";
     }
-    function selectedType() {
-      return document.querySelector('input[name="doc-type"]:checked').value;
-    }
-
     if (!token) {
       document.getElementById("formCard").innerHTML =
         "<p class='warn'>Tu n'es pas connecté. Retourne à la carte pour te connecter.</p>";
@@ -89,24 +91,39 @@
       setMsg("Aucune parcelle indiquée dans l'adresse.", "warn");
     }
 
-    async function uploadDocument() {
+    async function uploadDocuments() {
       if (!parcelId) { setMsg("Aucune parcelle indiquée.", "warn"); return; }
-      const fileInput = document.getElementById("doc-file");
-      if (!fileInput.files.length) { setMsg("Choisis un fichier à joindre.", "warn"); return; }
-      const fd = new FormData();
-      fd.append("file", fileInput.files[0]);
-      fd.append("doc_type", selectedType());
-      try {
-        const res = await fetch(`${API}${parcelId}/documents/`, {
-          method: "POST", headers: authHeaders(), body: fd
-        });
-        if (res.status === 403) { setMsg("Accès refusé : seul le propriétaire peut ajouter.", "warn"); return; }
-        const d = await res.json();
-        if (!res.ok) { setMsg("Erreur : " + JSON.stringify(d), "warn"); return; }
-        setMsg("Document ajouté (intégrité garantie par hash SHA-256).", "ok");
-        fileInput.value = "";
-        loadDocuments();
-      } catch (err) { setMsg("Erreur réseau : " + err, "warn"); }
+      const inputs = document.querySelectorAll('.doc-form input[type=file]');
+
+      // Rassemble les fichiers par type, avec la limite de 2 par type.
+      const jobs = [];
+      for (const inp of inputs) {
+        const files = Array.from(inp.files);
+        if (files.length === 0) continue;
+        if (files.length > 2) {
+          setMsg(`Maximum 2 fichiers par type (« ${inp.closest('tr').querySelector('.t-label').textContent} »).`, "warn");
+          return;
+        }
+        files.forEach(f => jobs.push({ type: inp.dataset.type, file: f }));
+      }
+      if (jobs.length === 0) { setMsg("Choisis au moins un fichier.", "warn"); return; }
+
+      setMsg(`Envoi de ${jobs.length} fichier(s)…`, "hint");
+      let ok = 0;
+      for (const job of jobs) {
+        const fd = new FormData();
+        fd.append("file", job.file);
+        fd.append("doc_type", job.type);
+        try {
+          const res = await fetch(`${API}${parcelId}/documents/`, { method: "POST", headers: authHeaders(), body: fd });
+          if (res.status === 403) { setMsg("Accès refusé : seul le propriétaire peut ajouter.", "warn"); return; }
+          if (res.ok) ok++;
+        } catch (err) { /* on continue les autres */ }
+      }
+      // réinitialise les champs
+      inputs.forEach(i => { i.value = ""; });
+      setMsg(`${ok}/${jobs.length} document(s) ajouté(s) (intégrité garantie par hash SHA-256).`, ok ? "ok" : "warn");
+      loadDocuments();
     }
 
     async function loadDocuments() {

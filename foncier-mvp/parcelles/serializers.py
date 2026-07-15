@@ -13,17 +13,26 @@ class ParcellePublicSerializer(GeoFeatureModelSerializer):
     class Meta:
         model = Parcelle
         geo_field = "geometry"
-        fields = ["id", "name", "status", "reliability", "surface_m2"]
+        fields = ["id", "reference", "status", "reliability", "surface_m2"]
 
 
-class ParcelleCreateSerializer(GeoFeatureModelSerializer):
-    """Entrée GeoJSON pour créer une parcelle (depuis la carte)."""
+class ParcelleSubmitSerializer(GeoFeatureModelSerializer):
+    """Entrée citoyen : une LOCALISATION (point). Aucun nom : la référence
+    officielle est attribuée automatiquement. Le tracé sera fait par le géomètre."""
 
     class Meta:
         model = Parcelle
-        geo_field = "geometry"
-        fields = ["id", "name", "description", "status", "reliability", "surface_m2"]
-        read_only_fields = ["status", "reliability", "surface_m2"]
+        geo_field = "declared_location"
+        fields = ["id", "reference", "status", "reliability"]
+        read_only_fields = ["reference", "status", "reliability"]
+
+
+class OverlapSerializer(serializers.Serializer):
+    """Petit format pour signaler une parcelle en conflit."""
+
+    id = serializers.IntegerField()
+    reference = serializers.CharField()
+    status = serializers.CharField()
 
 
 class OverlapSerializer(serializers.Serializer):

@@ -12,9 +12,9 @@ class ParcelleAdmin(GISModelAdmin):
     UNIQUEMENT par un superuser. Le statut et la fiabilité sont calculés
     automatiquement (signaux), donc personne ne les édite à la main."""
 
-    list_display = ("id", "name", "status", "reliability", "surface_m2", "owner", "created_at")
+    list_display = ("id", "reference", "status", "reliability", "surface_m2", "owner", "created_at")
     list_filter = ("status", "reliability")
-    search_fields = ("name",)
+    search_fields = ("reference",)
 
     def has_add_permission(self, request):
         return request.user.is_superuser

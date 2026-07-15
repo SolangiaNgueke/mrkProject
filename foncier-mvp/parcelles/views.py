@@ -14,43 +14,111 @@ from .permissions import IsOwnerOrStaffOrReadOnly
 from .serializers import (
     DocumentSerializer,
     OverlapSerializer,
-    ParcelleCreateSerializer,
     ParcellePublicSerializer,
+    ParcelleSubmitSerializer,
 )
 
 
 class ParcelleViewSet(viewsets.ModelViewSet):
     """API des parcelles.
 
-    GET  /api/parcelles/                -> FeatureCollection GeoJSON (champs publics)
-    POST /api/parcelles/                -> crée une parcelle + renvoie les chevauchements
-    POST /api/parcelles/check_overlap/  -> teste un polygone SANS l'enregistrer
+    VISIBILITÉ (règle centrale) :
+      - Publiques : uniquement les parcelles VALIDÉES (double validation) et celles
+        EN LITIGE confirmé par un vérificateur.
+      - Privées : brouillons, soumises, en vérification, rejetées -> visibles seulement
+        par leur propriétaire et les vérificateurs (notaire/cadastre/géomètre/admin).
+    La détection de chevauchement, elle, compare contre TOUTES les parcelles
+    (anti-fraude), mais anonymise les conflits avec des parcelles non publiques.
     """
 
-    queryset = Parcelle.objects.all().order_by("-created_at")
+    # Statuts affichés au grand public.
+    PUBLIC_STATUSES = (Parcelle.Status.VALIDATED, Parcelle.Status.DISPUTED)
+
     permission_classes = [IsOwnerOrStaffOrReadOnly]
+
+    @staticmethod
+    def _is_verifier(user):
+        return bool(
+            user
+            and user.is_authenticated
+            and (
+                user.is_superuser
+                or user.role in (user.Role.NOTARY, user.Role.SURVEYOR, user.Role.ADMIN)
+            )
+        )
+
+    def get_queryset(self):
+        """Ne renvoie que ce que l'utilisateur a le droit de voir."""
+        qs = Parcelle.objects.all().order_by("-created_at")
+        user = self.request.user
+
+        # Carte publique (liste) : uniquement les parcelles publiques AVEC un tracé
+        # officiel (donc validées). Les soumissions sans polygone n'y figurent pas.
+        if self.action == "list":
+            return qs.filter(status__in=self.PUBLIC_STATUSES, geometry__isnull=False)
+
+        # Les vérificateurs voient tout (ils doivent instruire les dossiers).
+        if self._is_verifier(user):
+            return qs
+
+        public = qs.filter(status__in=self.PUBLIC_STATUSES)
+        if user and user.is_authenticated:
+            # Le propriétaire voit en plus SES propres parcelles (ses soumissions).
+            return (public | qs.filter(owner=user)).distinct()
+        return public
 
     def get_serializer_class(self):
         if self.action == "create":
-            return ParcelleCreateSerializer
+            return ParcelleSubmitSerializer  # citoyen : une localisation (point)
         return ParcellePublicSerializer
 
-    def create(self, request, *args, **kwargs):
-        serializer = ParcelleCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        # La parcelle est automatiquement rattachée à l'utilisateur connecté.
-        parcelle = serializer.save(owner=request.user)  # surface_m2 calculée dans Model.save()
+    def _overlap_payload(self, overlaps, user):
+        """Détaille les conflits publics ou appartenant à l'utilisateur ;
+        anonymise les autres (ne jamais révéler l'existence détaillée d'une
+        parcelle privée d'autrui)."""
+        visible, anonymous = [], 0
+        for p in overlaps:
+            is_public = p.status in self.PUBLIC_STATUSES
+            is_mine = bool(user and user.is_authenticated and p.owner_id == user.id)
+            if is_public or is_mine or self._is_verifier(user):
+                visible.append(p)
+            else:
+                anonymous += 1
+        return {
+            "overlap_count": len(visible) + anonymous,
+            "overlaps": OverlapSerializer(visible, many=True).data,
+            "anonymous_overlaps": anonymous,
+        }
 
-        overlaps = parcelle.overlapping()
-        data = ParcellePublicSerializer(parcelle).data
-        data["overlaps"] = OverlapSerializer(overlaps, many=True).data
-        data["overlap_count"] = overlaps.count()
+    def create(self, request, *args, **kwargs):
+        """Le citoyen soumet une LOCALISATION (point) + un nom. Pas de tracé :
+        le polygone sera réalisé par le géomètre. La parcelle est privée
+        (statut « soumise ») jusqu'à validation."""
+        serializer = ParcelleSubmitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        parcelle = serializer.save(
+            owner=request.user, status=Parcelle.Status.SUBMITTED
+        )
+
+        data = ParcelleSubmitSerializer(parcelle).data
+        # Avertissement ANONYME : la localisation tombe-t-elle dans une parcelle
+        # déjà validée ? (on ne révèle aucun détail).
+        already = False
+        if parcelle.declared_location:
+            already = Parcelle.objects.filter(
+                status=Parcelle.Status.VALIDATED,
+                geometry__contains=parcelle.declared_location,
+            ).exists()
+        data["already_registered_zone"] = already
         return Response(data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"])
     def check_overlap(self, request):
-        """Reçoit une géométrie GeoJSON et renvoie les parcelles en conflit,
-        sans rien enregistrer. Utile pour avertir l'utilisateur en temps réel."""
+        """Teste un polygone SANS l'enregistrer.
+
+        Compare contre TOUTES les parcelles (y compris privées) pour ne rien
+        laisser passer, mais n'expose pas les détails des parcelles privées d'autrui.
+        """
         geom_data = request.data.get("geometry")
         if not geom_data:
             return Response(
@@ -58,8 +126,6 @@ class ParcelleViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            import json
-
             geom = GEOSGeometry(json.dumps(geom_data), srid=4326)
         except Exception as exc:  # noqa: BLE001
             return Response(
@@ -67,16 +133,10 @@ class ParcelleViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        overlaps = (
-            Parcelle.objects.filter(geometry__intersects=geom)
-            .exclude(status=Parcelle.Status.REJECTED)
+        overlaps = Parcelle.objects.filter(geometry__intersects=geom).exclude(
+            status=Parcelle.Status.REJECTED
         )
-        return Response(
-            {
-                "overlap_count": overlaps.count(),
-                "overlaps": OverlapSerializer(overlaps, many=True).data,
-            }
-        )
+        return Response(self._overlap_payload(overlaps, request.user))
 
     # ------------------------------------------------------------------ #
     #  Documents confidentiels                                            #
@@ -196,13 +256,19 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         if not self._is_surveyor(request.user):
             return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
         parcelle = self.get_object()
-        c = parcelle.geometry.centroid
+        # Référence : le polygone s'il existe, sinon la localisation déclarée.
+        ref = parcelle.geometry.centroid if parcelle.geometry else parcelle.declared_location
+        if ref is None:
+            return Response(
+                {"detail": "Aucune localisation pour cette parcelle."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response(
             {
-                "suggested_epsg": suggest_utm_epsg(c.x, c.y),
-                "utm_zone": utm_zone_label(c.x, c.y),
-                "lon": round(c.x, 6),
-                "lat": round(c.y, 6),
+                "suggested_epsg": suggest_utm_epsg(ref.x, ref.y),
+                "utm_zone": utm_zone_label(ref.x, ref.y),
+                "lon": round(ref.x, 6),
+                "lat": round(ref.y, 6),
             }
         )
 
@@ -240,11 +306,55 @@ class ParcelleViewSet(viewsets.ModelViewSet):
             },
         )
         surface = round(poly.transform(6933, clone=True).area, 2)
-        return Response(
-            {
-                "delimitation_id": delim.id,
-                "geometry": json.loads(poly.geojson),
-                "surface_m2": surface,
-            },
-            status=status.HTTP_201_CREATED,
+
+        # Anti-fraude : chevauchement du tracé avec des parcelles validées OU
+        # d'autres délimitations en cours (conflits anonymisés côté public).
+        ids = set(
+            Parcelle.objects.filter(geometry__intersects=poly)
+            .exclude(pk=parcelle.pk)
+            .exclude(status=Parcelle.Status.REJECTED)
+            .values_list("pk", flat=True)
         )
+        ids |= set(
+            Delimitation.objects.filter(validated_geometry__intersects=poly)
+            .exclude(parcelle=parcelle)
+            .values_list("parcelle_id", flat=True)
+        )
+        overlap = self._overlap_payload(Parcelle.objects.filter(pk__in=ids), request.user)
+
+        data = {
+            "delimitation_id": delim.id,
+            "geometry": json.loads(poly.geojson),
+            "surface_m2": surface,
+        }
+        data.update(overlap)
+        return Response(data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="ocr_plan",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def ocr_plan(self, request, pk=None):
+        """Lit un plan (image) et renvoie les points de bornage détectés.
+        NE sauvegarde rien : le géomètre vérifie/corrige, puis appelle
+        delimitation_from_points. L'OCR ne fait que pré-remplir."""
+        if not self._is_surveyor(request.user):
+            return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
+        self.get_object()  # vérifie l'existence de la parcelle
+
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response({"detail": "Aucun fichier fourni."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .ocr import extract_boundary_points
+
+        try:
+            points = extract_boundary_points(upload.read())
+        except Exception as exc:  # noqa: BLE001
+            return Response(
+                {"detail": f"OCR indisponible : {exc}"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response({"count": len(points), "points": points})

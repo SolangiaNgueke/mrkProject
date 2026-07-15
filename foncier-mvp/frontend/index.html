@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Foncier — carte (prototype)</title>
+  <title>Foncier — carte</title>
   <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <style>
@@ -12,7 +12,7 @@
     #panel {
       position: absolute; top: 12px; left: 12px; z-index: 1;
       background: #fff; padding: 14px 16px; border-radius: 10px;
-      box-shadow: 0 2px 12px rgba(0,0,0,.2); width: 280px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.2); width: 290px;
     }
     #panel h2 { margin: 0 0 8px; font-size: 15px; }
     button { cursor: pointer; padding: 8px 10px; border: 0; border-radius: 6px; font-size: 13px; }
@@ -33,7 +33,7 @@
   <div id="map"></div>
   <div id="panel">
 
-    <!-- Bloc connexion (affiché si NON connecté) -->
+    <!-- Connexion (si NON connecté) -->
     <div id="authBox">
       <h2>Connexion</h2>
       <input id="login-username" type="text" placeholder="Nom d'utilisateur" />
@@ -42,31 +42,27 @@
         <button class="btn-primary" onclick="login()">Se connecter</button>
         <button class="btn-ghost" onclick="register()">Créer un compte</button>
       </div>
-      <p class="hint">Crée un compte (citoyen) ou connecte-toi avec ton compte admin.</p>
+      <p class="hint">Crée un compte (citoyen) ou connecte-toi.</p>
     </div>
 
-    <!-- Bloc parcelle (affiché si connecté) -->
+    <!-- Déclaration d'une parcelle (si connecté) -->
     <div id="parcelBox" class="hidden">
       <div id="userbar"></div>
-      <h2>Enregistrer une parcelle</h2>
-      <p class="hint">1) Clique sur la carte pour poser les coins du terrain.<br>
-         2) Clique « Terminer le tracé ».<br>
-         3) Donne un nom et enregistre.</p>
-      <input id="name" type="text" placeholder="Nom / référence du terrain" />
+      <h2>Déclarer une parcelle</h2>
+      <p class="hint">1) Indique la localisation : clique sur la carte ou « Ma position ».<br>
+         2) Enregistre, puis ajoute tes documents.<br>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="btn-ghost" onclick="startDraw()">Tracer</button>
-        <button class="btn-ghost" onclick="finishDraw()">Terminer le tracé</button>
-        <button class="btn-ghost" onclick="resetDraw()">Effacer</button>
+        <button class="btn-ghost" onclick="useMyLocation()">📍 Ma position</button>
+        <button class="btn-ghost" onclick="clearMarker()">Effacer le point</button>
         <button class="btn-primary" onclick="saveParcelle()">Enregistrer</button>
       </div>
 
-      <!-- Documents : géré sur une page dédiée (ouverte dans un autre onglet) -->
+      <!-- Documents (après enregistrement) -->
       <div id="docsBox" class="hidden">
         <div class="sep"></div>
-        <h2>Documents — parcelle #<span id="docs-parcel-id"></span></h2>
-        <p class="hint">Pièces confidentielles (titre, acte…), visibles uniquement
-          par toi et les vérificateurs.</p>
-        <button class="btn-primary" onclick="openDocsPage()">Gérer les documents ↗</button>
+        <h2>Parcelle #<span id="docs-parcel-id"></span> enregistrée</h2>
+        <p class="hint">Ajoute maintenant tes pièces justificatives (titre, acte, plan…).</p>
+        <button class="btn-primary" onclick="openDocsPage()">Ajouter les documents ↗</button>
       </div>
 
       <div class="sep"></div>
@@ -81,16 +77,20 @@
     const API = API_ROOT + "parcelles/";
     const AUTH = API_ROOT + "auth/";
 
-    // --- Gestion du token (persisté pour ne pas se reconnecter à chaque rechargement) ---
     let token = localStorage.getItem("foncier_token");
-    let lastParcelId = null;  // dernière parcelle enregistrée (pour y attacher des documents)
+    let lastParcelId = null;
 
     function authHeaders() {
       const h = { "Content-Type": "application/json" };
       if (token) h["Authorization"] = "Token " + token;
       return h;
     }
+    function setMsg(text, cls) {
+      const el = document.getElementById("msg");
+      el.textContent = text; el.className = cls || "hint";
+    }
 
+    // ---------------- Authentification ----------------
     function showLoggedIn(user) {
       document.getElementById("authBox").classList.add("hidden");
       document.getElementById("parcelBox").classList.remove("hidden");
@@ -101,200 +101,122 @@
       document.getElementById("authBox").classList.remove("hidden");
       document.getElementById("parcelBox").classList.add("hidden");
     }
-
     async function register() {
       const username = document.getElementById("login-username").value.trim();
       const password = document.getElementById("login-password").value;
-      if (!username || !password) { setMsg("Renseigne un nom d'utilisateur et un mot de passe (8 caractères min).", "warn"); return; }
+      if (!username || !password) { setMsg("Nom d'utilisateur et mot de passe (8+ caractères) requis.", "warn"); return; }
       try {
-        const res = await fetch(AUTH + "register/", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password })
-        });
+        const res = await fetch(AUTH + "register/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
         const d = await res.json();
         if (!res.ok) { setMsg("Inscription refusée : " + JSON.stringify(d), "warn"); return; }
         token = d.token; localStorage.setItem("foncier_token", token);
-        showLoggedIn(d.user);
-        setMsg("Compte créé. Tu es connecté.", "ok");
-      } catch (err) { setMsg("Erreur réseau : " + err, "warn"); }
+        showLoggedIn(d.user); setMsg("Compte créé. Tu es connecté.", "ok");
+      } catch (e) { setMsg("Erreur réseau : " + e, "warn"); }
     }
-
     async function login() {
       const username = document.getElementById("login-username").value.trim();
       const password = document.getElementById("login-password").value;
       try {
-        const res = await fetch(AUTH + "login/", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password })
-        });
+        const res = await fetch(AUTH + "login/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
         const d = await res.json();
         if (!res.ok) { setMsg("Identifiants incorrects.", "warn"); return; }
         token = d.token; localStorage.setItem("foncier_token", token);
-        showLoggedIn(d.user);
-        setMsg("Connecté.", "ok");
-      } catch (err) { setMsg("Erreur réseau : " + err, "warn"); }
+        showLoggedIn(d.user); setMsg("Connecté.", "ok");
+      } catch (e) { setMsg("Erreur réseau : " + e, "warn"); }
     }
-
-    function logout() {
-      token = null; localStorage.removeItem("foncier_token");
-      showLoggedOut(); setMsg("Déconnecté.", "");
-    }
-
+    function logout() { token = null; localStorage.removeItem("foncier_token"); showLoggedOut(); setMsg("Déconnecté.", ""); }
     async function checkSession() {
       if (!token) { showLoggedOut(); return; }
       try {
         const res = await fetch(AUTH + "me/", { headers: authHeaders() });
-        if (res.ok) { showLoggedIn(await res.json()); }
-        else { logout(); }
-      } catch (err) { showLoggedOut(); }
+        if (res.ok) showLoggedIn(await res.json()); else logout();
+      } catch (e) { showLoggedOut(); }
     }
 
-    // --- Carte avec imagerie satellite (Esri World Imagery, à usage prototype) ---
+    // ---------------- Carte ----------------
     const map = new maplibregl.Map({
       container: "map",
-      style: {
-        version: 8,
-        sources: {
-          satellite: {
-            type: "raster",
-            tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-            tileSize: 256,
-            attribution: "Imagery © Esri"
-          }
-        },
-        layers: [{ id: "satellite", type: "raster", source: "satellite" }]
-      },
-      center: [1.2, 6.13],  // Lomé, Togo
-      zoom: 16
+      style: { version: 8,
+        sources: { sat: { type: "raster",
+          tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+          tileSize: 256, attribution: "Imagery © Esri" } },
+        layers: [{ id: "sat", type: "raster", source: "sat" }] },
+      center: [1.2, 6.13], zoom: 16
     });
 
-    let drawing = false;
-    let points = [];
+    // Marqueur unique de localisation déclarée
+    let marker = null;
+    function setMarker(lng, lat) {
+      if (!marker) marker = new maplibregl.Marker({ draggable: true, color: "#2563eb" }).setLngLat([lng, lat]).addTo(map);
+      else marker.setLngLat([lng, lat]);
+    }
+    function clearMarker() { if (marker) { marker.remove(); marker = null; } setMsg("Point effacé.", ""); }
+    function currentPoint() {
+      if (!marker) return null;
+      const ll = marker.getLngLat();
+      return { type: "Point", coordinates: [ll.lng, ll.lat] };
+    }
+    function useMyLocation() {
+      if (!navigator.geolocation) { setMsg("Géolocalisation non disponible sur cet appareil.", "warn"); return; }
+      setMsg("Recherche de ta position…", "");
+      navigator.geolocation.getCurrentPosition(
+        (pos) => { const { longitude, latitude } = pos.coords; setMarker(longitude, latitude); map.flyTo({ center: [longitude, latitude], zoom: 17 }); setMsg("Position récupérée. Tu peux ajuster le point en le déplaçant.", "ok"); },
+        (err) => { setMsg("Position indisponible : " + err.message, "warn"); }
+      );
+    }
 
     map.on("load", () => {
       map.addSource("parcelles", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({
-        id: "parcelles-fill", type: "fill", source: "parcelles",
-        paint: {
-          "fill-color": [
-            "match", ["get", "status"],
-            "validated", "#22c55e",
-            "disputed", "#ef4444",
-            "#f59e0b"
-          ],
-          "fill-opacity": 0.45
-        }
-      });
-      map.addLayer({
-        id: "parcelles-line", type: "line", source: "parcelles",
-        paint: { "line-color": "#fff", "line-width": 1.5 }
-      });
-      map.addSource("draft", { type: "geojson", data: emptyFC() });
-      map.addLayer({ id: "draft-fill", type: "fill", source: "draft", paint: { "fill-color": "#2563eb", "fill-opacity": 0.3 } });
-      map.addLayer({ id: "draft-line", type: "line", source: "draft", paint: { "line-color": "#2563eb", "line-width": 2 } });
+      map.addLayer({ id: "parcelles-fill", type: "fill", source: "parcelles",
+        paint: { "fill-color": ["match", ["get", "status"], "validated", "#22c55e", "disputed", "#ef4444", "#f59e0b"], "fill-opacity": 0.45 } });
+      map.addLayer({ id: "parcelles-line", type: "line", source: "parcelles", paint: { "line-color": "#fff", "line-width": 1.5 } });
       loadParcelles();
     });
 
+    // Clic sur la carte = poser/déplacer le point de localisation
     map.on("click", (e) => {
-      if (!drawing) return;
-      points.push([e.lngLat.lng, e.lngLat.lat]);
-      renderDraft(false);
+      if (document.getElementById("parcelBox").classList.contains("hidden")) return; // pas connecté
+      setMarker(e.lngLat.lng, e.lngLat.lat);
     });
-
-    function emptyFC() { return { type: "FeatureCollection", features: [] }; }
-
-    function renderDraft(closed) {
-      let coords = points.slice();
-      let data;
-      if (closed && coords.length >= 3) {
-        coords = coords.concat([coords[0]]);
-        data = { type: "FeatureCollection", features: [
-          { type: "Feature", geometry: { type: "Polygon", coordinates: [coords] }, properties: {} } ]};
-      } else if (coords.length >= 2) {
-        data = { type: "FeatureCollection", features: [
-          { type: "Feature", geometry: { type: "LineString", coordinates: coords }, properties: {} } ]};
-      } else { data = emptyFC(); }
-      map.getSource("draft").setData(data);
-    }
-
-    function startDraw() { drawing = true; points = []; renderDraft(false); setMsg("Tracé activé : clique les coins du terrain.", ""); }
-    function finishDraw() {
-      if (points.length < 3) { setMsg("Il faut au moins 3 points.", "warn"); return; }
-      drawing = false; renderDraft(true); checkOverlap();
-    }
-    function resetDraw() { drawing = false; points = []; map.getSource("draft").setData(emptyFC()); setMsg("", ""); }
-
-    function currentPolygon() {
-      const ring = points.concat([points[0]]);
-      return { type: "Polygon", coordinates: [ring] };
-    }
-
-    async function checkOverlap() {
-      try {
-        const res = await fetch(API + "check_overlap/", {
-          method: "POST", headers: authHeaders(),
-          body: JSON.stringify({ geometry: currentPolygon() })
-        });
-        if (res.status === 401) { setMsg("Connecte-toi d'abord.", "warn"); return; }
-        const d = await res.json();
-        if (d.overlap_count > 0) {
-          const names = d.overlaps.map(o => `#${o.id} ${o.name} (${o.status})`).join("\n");
-          setMsg(`⚠️ CHEVAUCHEMENT détecté avec ${d.overlap_count} parcelle(s) :\n${names}`, "warn");
-        } else {
-          setMsg("✅ Aucun chevauchement. Tu peux enregistrer.", "ok");
-        }
-      } catch (err) { setMsg("Erreur réseau : " + err, "warn"); }
-    }
-
-    async function saveParcelle() {
-      if (points.length < 3) { setMsg("Trace d'abord une parcelle (3 points min).", "warn"); return; }
-      const name = document.getElementById("name").value.trim() || "Sans nom";
-      const feature = { type: "Feature", geometry: currentPolygon(), properties: { name } };
-      try {
-        const res = await fetch(API, { method: "POST", headers: authHeaders(), body: JSON.stringify(feature) });
-        if (res.status === 401) { setMsg("Tu dois être connecté pour enregistrer.", "warn"); return; }
-        const d = await res.json();
-        if (!res.ok) { setMsg("Erreur : " + JSON.stringify(d), "warn"); return; }
-        let txt = `Parcelle #${d.id} enregistrée. Surface ≈ ${Math.round(d.properties.surface_m2)} m².`;
-        if (d.overlap_count > 0) txt += `\n⚠️ Mais ${d.overlap_count} chevauchement(s) — à arbitrer par un vérificateur.`;
-        setMsg(txt, d.overlap_count > 0 ? "warn" : "ok");
-        resetDraw();
-        loadParcelles();
-        lastParcelId = d.id;          // on mémorise la parcelle créée
-        showDocsPanel();              // et on affiche la zone documents
-        loadDocuments();
-      } catch (err) { setMsg("Erreur réseau : " + err, "warn"); }
-    }
 
     async function loadParcelles() {
       try {
-        const res = await fetch(API);  // lecture publique, sans token
+        const res = await fetch(API);           // liste publique = validées uniquement
         const data = await res.json();
         map.getSource("parcelles").setData(data);
-      } catch (err) { console.error(err); }
+      } catch (e) { console.error(e); }
     }
 
-    function setMsg(text, cls) {
-      const el = document.getElementById("msg");
-      el.textContent = text;
-      el.className = cls || "hint";
+    async function saveParcelle() {
+      const point = currentPoint();
+      if (!point) { setMsg("Indique d'abord ta localisation (clic sur la carte ou « Ma position »).", "warn"); return; }
+      const feature = { type: "Feature", geometry: point, properties: {} };
+      try {
+        const res = await fetch(API, { method: "POST", headers: authHeaders(), body: JSON.stringify(feature) });
+        if (res.status === 401) { setMsg("Connecte-toi pour enregistrer.", "warn"); return; }
+        const d = await res.json();
+        if (!res.ok) { setMsg("Erreur : " + JSON.stringify(d), "warn"); return; }
+        lastParcelId = d.id;
+        const ref = (d.properties && d.properties.reference) ? d.properties.reference : ("#" + d.id);
+        let txt = `Localisation enregistrée. Référence : ${ref}.`;
+        if (d.already_registered_zone) txt += "\n⚠️ Cette zone fait déjà l'objet d'une parcelle enregistrée.";
+        setMsg(txt, d.already_registered_zone ? "warn" : "ok");
+        showDocsPanel();
+        clearMarker();
+      } catch (e) { setMsg("Erreur réseau : " + e, "warn"); }
     }
 
-    // --- Documents : sur une page dédiée (autre onglet) ---
+    // ---------------- Documents (page dédiée) ----------------
     function showDocsPanel() {
       document.getElementById("docsBox").classList.remove("hidden");
       document.getElementById("docs-parcel-id").textContent = lastParcelId;
     }
-
     function openDocsPage() {
-      if (!lastParcelId) { setMsg("Enregistre d'abord une parcelle.", "warn"); return; }
-      // Ouvre la page documents dans un nouvel onglet (le token est partagé via localStorage).
+      if (!lastParcelId) return;
       window.open(`documents.html?parcelle=${lastParcelId}`, "_blank");
     }
 
-    function loadDocuments() { /* géré sur la page dédiée */ }
-
-    checkSession();  // au chargement : restaure la session si un token existe
+    checkSession();
   </script>
 </body>
 </html>

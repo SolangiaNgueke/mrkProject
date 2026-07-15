@@ -21,8 +21,17 @@ class Parcelle(models.Model):
         HIGH = "high", "Élevée"       # délimitation + vérification validées
 
     # --- données plutôt publiques ---
-    name = models.CharField(max_length=255)
-    geometry = gis_models.PolygonField(srid=4326)  # WGS84 (lng/lat)
+    # Référence unique attribuée automatiquement (ex. PARC-2026-000042).
+    # C'est l'identifiant officiel de la parcelle : ni choisi, ni falsifiable.
+    reference = models.CharField(max_length=20, unique=True, null=True, blank=True, db_index=True)
+    # Ancien champ nom conservé (optionnel, non utilisé côté public).
+    name = models.CharField(max_length=255, blank=True, default="")
+    # Localisation déclarée par le citoyen (un simple point). C'est le point de
+    # départ : le polygone officiel est réalisé plus tard par le géomètre.
+    declared_location = gis_models.PointField(srid=4326, null=True, blank=True)
+    # Tracé officiel (polygone). Reste vide tant que le géomètre n'a pas délimité
+    # et que la vérification n'est pas validée.
+    geometry = gis_models.PolygonField(srid=4326, null=True, blank=True)  # WGS84 (lng/lat)
     surface_m2 = models.FloatField(null=True, blank=True)
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.SUBMITTED
@@ -54,13 +63,29 @@ class Parcelle(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.name} [{self.get_status_display()}]"
+        return f"{self.reference or '(sans réf.)'} [{self.get_status_display()}]"
 
     def save(self, *args, **kwargs):
         # Surface en m² via une projection à aires égales (EPSG:6933).
         if self.geometry:
             self.surface_m2 = round(self.geometry.transform(6933, clone=True).area, 2)
         super().save(*args, **kwargs)
+        # Attribue la référence officielle une fois le pk connu :
+        # format PAYS-RÉGION-ANNÉE-NUMÉRO (ex. TG-1-26-000042).
+        if not self.reference:
+            from django.utils import timezone
+
+            from .geoloc import resolve_location
+
+            year = (self.created_at or timezone.now()).year % 100
+            cc, region = ("XX", "0")
+            if self.declared_location:
+                cc, region = resolve_location(
+                    self.declared_location.x, self.declared_location.y
+                )
+            ref = f"{cc}-{region}-{year:02d}-{self.pk:06d}"
+            Parcelle.objects.filter(pk=self.pk).update(reference=ref)
+            self.reference = ref
 
     def overlapping(self):
         """Parcelles existantes qui empiètent sur celle-ci (cœur anti-fraude).
