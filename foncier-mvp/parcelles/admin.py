@@ -3,7 +3,7 @@ from django.contrib.gis.admin import GISModelAdmin
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import Delimitation, Document, Parcelle, VerificationDossier
+from .models import Conflit, Delimitation, Document, Parcelle, VerificationDossier
 
 
 @admin.register(Parcelle)
@@ -103,3 +103,22 @@ class VerificationDossierAdmin(admin.ModelAdmin):
         if obj.decision != VerificationDossier.Decision.PENDING and not obj.decided_at:
             obj.decided_at = timezone.now()
         super().save_model(request, obj, form, change)
+
+
+@admin.register(Conflit)
+class ConflitAdmin(admin.ModelAdmin):
+    """Alerte administrateur : chevauchements détectés automatiquement.
+    Un chevauchement minime peut venir d'une erreur de saisie de coordonnées :
+    l'administrateur enquête. Le conflit se résout tout seul quand il disparaît."""
+
+    list_display = ("id", "parcelle_a", "parcelle_b", "overlap_area_m2", "etat", "created_at")
+    list_filter = ("resolved_at",)
+    readonly_fields = ("parcelle_a", "parcelle_b", "overlap_area_m2", "created_at", "resolved_at")
+
+    def has_add_permission(self, request):
+        return False  # créé automatiquement par le système
+
+    @admin.display(description="État", boolean=True)
+    def etat(self, obj):
+        # True = actif (non résolu)
+        return obj.resolved_at is None

@@ -31,6 +31,13 @@
 </head>
 <body>
   <div id="map"></div>
+  <div id="legend" style="position:absolute;bottom:14px;left:14px;z-index:1;background:#fff;
+       padding:8px 12px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.18);font:12px system-ui">
+    <div style="font-weight:600;margin-bottom:4px">Statut des parcelles</div>
+    <div><span style="display:inline-block;width:12px;height:12px;background:#3b82f6;border-radius:2px;margin-right:6px"></span>Tracée (en vérification)</div>
+    <div><span style="display:inline-block;width:12px;height:12px;background:#22c55e;border-radius:2px;margin-right:6px"></span>Validée</div>
+    <div><span style="display:inline-block;width:12px;height:12px;background:#ef4444;border-radius:2px;margin-right:6px"></span>En litige</div>
+  </div>
   <div id="panel">
 
     <!-- Connexion (si NON connecté) -->
@@ -51,6 +58,7 @@
       <h2>Déclarer une parcelle</h2>
       <p class="hint">1) Indique la localisation : clique sur la carte ou « Ma position ».<br>
          2) Enregistre, puis ajoute tes documents.<br>
+         <i>Une référence officielle est attribuée automatiquement.</i></p>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn-ghost" onclick="useMyLocation()">📍 Ma position</button>
         <button class="btn-ghost" onclick="clearMarker()">Effacer le point</button>
@@ -134,13 +142,13 @@
     }
 
     // ---------------- Carte ----------------
+    // Fond de carte clair type plan (rues + bâtiments), à la Zillow.
+    // Service gratuit OpenFreeMap, sans clé d'API. Styles possibles :
+    //   liberty (rues + bâtiments), positron (clair/épuré), bright (coloré).
+    // Pour un rendu premium, remplacer par MapTiler/Mapbox (avec clé).
     const map = new maplibregl.Map({
       container: "map",
-      style: { version: 8,
-        sources: { sat: { type: "raster",
-          tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-          tileSize: 256, attribution: "Imagery © Esri" } },
-        layers: [{ id: "sat", type: "raster", source: "sat" }] },
+      style: "https://tiles.openfreemap.org/styles/liberty",
       center: [1.2, 6.13], zoom: 16
     });
 
@@ -168,13 +176,41 @@
     map.on("load", () => {
       map.addSource("parcelles", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({ id: "parcelles-fill", type: "fill", source: "parcelles",
-        paint: { "fill-color": ["match", ["get", "status"], "validated", "#22c55e", "disputed", "#ef4444", "#f59e0b"], "fill-opacity": 0.45 } });
+        paint: { "fill-color": ["match", ["get", "status"],
+          "verifying", "#3b82f6",
+          "validated", "#22c55e",
+          "disputed", "#ef4444",
+          "#3b82f6"], "fill-opacity": 0.45 } });
       map.addLayer({ id: "parcelles-line", type: "line", source: "parcelles", paint: { "line-color": "#fff", "line-width": 1.5 } });
       loadParcelles();
     });
 
-    // Clic sur la carte = poser/déplacer le point de localisation
+    // Étiquettes lisibles pour l'info-bulle
+    const STATUS_LABELS = { verifying: "Tracée, en vérification", validated: "Validée", disputed: "En litige" };
+    const RELIABILITY_LABELS = { low: "Faible", medium: "Moyenne", high: "Élevée" };
+
+    function showParcelInfo(feature, lngLat) {
+      const p = feature.properties || {};
+      const surface = p.surface_m2 ? `${Math.round(p.surface_m2)} m² (${(p.surface_m2/10000).toFixed(2)} ha)` : "—";
+      // Infos PUBLIQUES uniquement — jamais le nom du propriétaire.
+      const html =
+        `<div style="font-family:system-ui;font-size:13px;min-width:180px">
+           <div style="font-weight:700;margin-bottom:4px">${p.reference || "Réf. inconnue"}</div>
+           <div>Statut : ${STATUS_LABELS[p.status] || p.status}</div>
+           <div>Fiabilité : ${RELIABILITY_LABELS[p.reliability] || p.reliability}</div>
+           <div>Dimension : ${surface}</div>
+         </div>`;
+      new maplibregl.Popup().setLngLat(lngLat).setHTML(html).addTo(map);
+    }
+
+    // Curseur "main" au survol d'une parcelle
+    map.on("mouseenter", "parcelles-fill", () => { map.getCanvas().style.cursor = "pointer"; });
+    map.on("mouseleave", "parcelles-fill", () => { map.getCanvas().style.cursor = ""; });
+
+    // Clic : si on touche une parcelle -> infos publiques ; sinon -> poser un point
     map.on("click", (e) => {
+      const hits = map.queryRenderedFeatures(e.point, { layers: ["parcelles-fill"] });
+      if (hits.length) { showParcelInfo(hits[0], e.lngLat); return; }
       if (document.getElementById("parcelBox").classList.contains("hidden")) return; // pas connecté
       setMarker(e.lngLat.lng, e.lngLat.lat);
     });

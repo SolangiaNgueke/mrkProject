@@ -32,7 +32,14 @@ class ParcelleViewSet(viewsets.ModelViewSet):
     """
 
     # Statuts affichés au grand public.
-    PUBLIC_STATUSES = (Parcelle.Status.VALIDATED, Parcelle.Status.DISPUTED)
+    # Publiques dès qu'un géomètre les a tracées : en vérification (bleu),
+    # validées (vert) ou en litige (rouge). Les simples soumissions (point,
+    # sans tracé) restent privées.
+    PUBLIC_STATUSES = (
+        Parcelle.Status.VERIFYING,
+        Parcelle.Status.VALIDATED,
+        Parcelle.Status.DISPUTED,
+    )
 
     permission_classes = [IsOwnerOrStaffOrReadOnly]
 
@@ -272,6 +279,30 @@ class ParcelleViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @action(detail=True, methods=["post"], url_path="preview_delimitation")
+    def preview_delimitation(self, request, pk=None):
+        """Calcule et renvoie le polygone SANS rien enregistrer (prévisualisation)."""
+        if not self._is_surveyor(request.user):
+            return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
+        self.get_object()
+
+        source_epsg = request.data.get("source_epsg")
+        points = request.data.get("points")
+        if not source_epsg or not points:
+            return Response(
+                {"detail": "Champs 'source_epsg' et 'points' requis."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            poly = polygon_from_points(points, source_epsg)
+        except Exception as exc:  # noqa: BLE001
+            return Response(
+                {"detail": f"Coordonnées invalides : {exc}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        surface = round(poly.transform(6933, clone=True).area, 2)
+        return Response({"geometry": json.loads(poly.geojson), "surface_m2": surface})
+
     @action(detail=True, methods=["post"], url_path="delimitation_from_points")
     def delimitation_from_points(self, request, pk=None):
         """Construit la délimitation du géomètre à partir d'un tableau de points
@@ -295,6 +326,11 @@ class ParcelleViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Le tracé du géomètre devient la géométrie de la parcelle : elle
+        # apparaît immédiatement sur la carte (bleu) et sert à détecter les conflits.
+        parcelle.geometry = poly
+        parcelle.save(update_fields=["geometry", "surface_m2", "updated_at"])
+
         # Crée ou met à jour la délimitation (déclenche le signal de statut).
         delim, _ = Delimitation.objects.update_or_create(
             parcelle=parcelle,
@@ -307,18 +343,18 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         )
         surface = round(poly.transform(6933, clone=True).area, 2)
 
-        # Anti-fraude : chevauchement du tracé avec des parcelles validées OU
-        # d'autres délimitations en cours (conflits anonymisés côté public).
+        # Détection AUTOMATIQUE des litiges : crée les alertes (Conflit) pour
+        # l'administrateur, passe les parcelles concernées en rouge, résout ce
+        # qui ne se chevauche plus. (Réponse au géomètre : conflit anonymisé.)
+        from .signals import recompute_conflicts
+
+        recompute_conflicts(parcelle)
+
         ids = set(
             Parcelle.objects.filter(geometry__intersects=poly)
             .exclude(pk=parcelle.pk)
             .exclude(status=Parcelle.Status.REJECTED)
             .values_list("pk", flat=True)
-        )
-        ids |= set(
-            Delimitation.objects.filter(validated_geometry__intersects=poly)
-            .exclude(parcelle=parcelle)
-            .values_list("parcelle_id", flat=True)
         )
         overlap = self._overlap_payload(Parcelle.objects.filter(pk__in=ids), request.user)
 

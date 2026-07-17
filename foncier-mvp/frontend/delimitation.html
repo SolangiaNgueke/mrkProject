@@ -67,7 +67,9 @@
         <tbody id="pts-body"></tbody>
       </table>
       <button class="btn-ghost" onclick="addRow()">+ Ajouter un point</button>
-      <button class="btn-primary" onclick="computePolygon()">Calculer &amp; prévisualiser</button>
+      <button class="btn-primary" onclick="computePreview()">Prévisualiser</button>
+      <button class="btn-primary" id="btn-validate" style="display:none;background:#22c55e"
+              onclick="validateTrace()">Valider le tracé</button>
       <div id="msg"></div>
     </div>
 
@@ -135,39 +137,80 @@
         document.getElementById("epsg").value = d.suggested_epsg;
         document.getElementById("crs-suggestion").innerHTML =
           `Zone détectée : <b>UTM ${d.utm_zone}</b> → EPSG <b>${d.suggested_epsg}</b> (modifiable si ton plan diffère).`;
+        // Repère : la localisation déclarée par le citoyen.
+        map.flyTo({ center: [d.lon, d.lat], zoom: 16 });
+        new maplibregl.Marker({ color: "#f59e0b" }).setLngLat([d.lon, d.lat]).addTo(map);
       } catch (e) { /* silencieux */ }
     }
 
     // --- Calcul + prévisualisation ---
-    async function computePolygon() {
+    let lastPreview = null;  // { epsg, points } de la dernière prévisualisation réussie
+
+    function readInputs() {
       const pts = readPoints();
       const epsg = document.getElementById("epsg").value;
+      return { pts, epsg };
+    }
+
+    // Prévisualisation : calcule et affiche, SANS enregistrer.
+    async function computePreview() {
+      const { pts, epsg } = readInputs();
       if (pts.length < 3) { setMsg("Il faut au moins 3 points valides.", "warn"); return; }
       if (!epsg) { setMsg("Indique le code EPSG.", "warn"); return; }
       try {
-        const res = await fetch(`${API}${parcelId}/delimitation_from_points/`, {
+        const res = await fetch(`${API}${parcelId}/preview_delimitation/`, {
           method: "POST", headers: authHeaders(),
           body: JSON.stringify({ source_epsg: parseInt(epsg), points: pts })
         });
         const d = await res.json();
         if (!res.ok) { setMsg("Erreur : " + (d.detail || JSON.stringify(d)), "warn"); return; }
-        setMsg("Délimitation enregistrée. La parcelle passe en vérification.", "ok");
         document.getElementById("result").innerHTML =
-          `Surface calculée ≈ <b>${Math.round(d.surface_m2)} m²</b> (${(d.surface_m2/10000).toFixed(2)} ha).`;
+          `Aperçu — surface ≈ <b>${Math.round(d.surface_m2)} m²</b> (${(d.surface_m2/10000).toFixed(2)} ha). Vérifie le tracé, puis valide.`;
         showOnMap(d.geometry);
+        // La prévisualisation réussie débloque la validation.
+        lastPreview = { epsg: parseInt(epsg), points: pts };
+        document.getElementById("btn-validate").style.display = "inline-block";
+        setMsg("Prévisualisation OK. Si le tracé est correct, clique « Valider le tracé ».", "ok");
       } catch (e) { setMsg("Erreur réseau : " + e, "warn"); }
     }
+
+    // Validation : rend le tracé effectif (enregistrement + conflits). Confirmation obligatoire.
+    async function validateTrace() {
+      if (!lastPreview) { setMsg("Prévisualise d'abord le tracé.", "warn"); return; }
+      if (!confirm("Valider ce tracé ?\nIl deviendra effectif : la parcelle sera visible et une vérification de conflit sera lancée.")) return;
+      try {
+        const res = await fetch(`${API}${parcelId}/delimitation_from_points/`, {
+          method: "POST", headers: authHeaders(),
+          body: JSON.stringify({ source_epsg: lastPreview.epsg, points: lastPreview.points })
+        });
+        const d = await res.json();
+        if (!res.ok) { setMsg("Erreur : " + (d.detail || JSON.stringify(d)), "warn"); return; }
+        if (d.overlap_count && d.overlap_count > 0) {
+          setMsg(`Tracé validé. ⚠️ Chevauchement avec ${d.overlap_count} parcelle(s) — mis en litige, à arbitrer.`, "warn");
+        } else {
+          setMsg("Tracé validé. La parcelle est désormais visible (en vérification).", "ok");
+        }
+        document.getElementById("result").innerHTML =
+          `Enregistré — surface ≈ <b>${Math.round(d.surface_m2)} m²</b> (${(d.surface_m2/10000).toFixed(2)} ha).`;
+        showOnMap(d.geometry);
+        document.getElementById("btn-validate").style.display = "none";
+        lastPreview = null;
+      } catch (e) { setMsg("Erreur réseau : " + e, "warn"); }
+    }
+
+    // Toute modification annule la prévisualisation : il faut reprévisualiser avant de valider.
+    document.getElementById("formCard").addEventListener("input", () => {
+      lastPreview = null;
+      document.getElementById("btn-validate").style.display = "none";
+    });
 
     // --- Carte d'aperçu (satellite) ---
     let map;
     function initMap() {
+      // Fond de carte clair type plan (comme la carte publique).
       map = new maplibregl.Map({
         container: "map",
-        style: { version: 8,
-          sources: { sat: { type: "raster",
-            tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-            tileSize: 256, attribution: "Imagery © Esri" } },
-          layers: [{ id: "sat", type: "raster", source: "sat" }] },
+        style: "https://tiles.openfreemap.org/styles/liberty",
         center: [1.2, 6.13], zoom: 14
       });
     }

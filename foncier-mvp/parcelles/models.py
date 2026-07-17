@@ -163,3 +163,27 @@ class VerificationDossier(models.Model):
     comments = models.TextField(blank=True)
     decided_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+class Conflit(models.Model):
+    """Signalement AUTOMATIQUE d'un chevauchement entre deux parcelles.
+
+    Sert d'alerte à l'administrateur : un chevauchement minime peut venir d'une
+    simple erreur de saisie de coordonnées. Les deux parcelles passent en litige
+    (rouge). Le conflit se résout AUTOMATIQUEMENT quand le chevauchement disparaît.
+    """
+
+    parcelle_a = models.ForeignKey(
+        Parcelle, on_delete=models.CASCADE, related_name="conflits_a"
+    )
+    parcelle_b = models.ForeignKey(
+        Parcelle, on_delete=models.CASCADE, related_name="conflits_b"
+    )
+    overlap_area_m2 = models.FloatField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)  # null = conflit actif
+
+    def __str__(self):
+        etat = "résolu" if self.resolved_at else "ACTIF"
+        a = self.parcelle_a.reference or self.parcelle_a_id
+        b = self.parcelle_b.reference or self.parcelle_b_id
+        return f"Conflit {a} × {b} [{etat}]"
