@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Documents uploadés (confidentiels)
+media/
+
+# Secrets et environnement
+.env
+*.env
+
+# Base de données locale éventuelle
+*.sqlite3
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store

@@ -98,3 +98,23 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8000",
 ]
 CORS_ALLOW_ALL_ORIGINS = DEBUG  # pratique en dev uniquement
+
+# ------------------------------------------------------------------ #
+#  Email (notifications aux propriétaires)                            #
+# ------------------------------------------------------------------ #
+# Bascule automatique :
+#   - si EMAIL_HOST_USER est renseigné (dans .env) -> vrais envois via SMTP
+#   - sinon -> mode console (les emails s'affichent dans les logs Docker)
+# Les identifiants ne sont JAMAIS écrits ici : ils viennent du fichier .env.
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+
+if EMAIL_HOST_USER:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
+    EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+    EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "1") == "1"
+    DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+    DEFAULT_FROM_EMAIL = "Plateforme Foncière <no-reply@foncier.local>"

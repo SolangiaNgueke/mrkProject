@@ -107,6 +107,11 @@ class ParcelleViewSet(viewsets.ModelViewSet):
             owner=request.user, status=Parcelle.Status.SUBMITTED
         )
 
+        # Accusé de réception au propriétaire.
+        from .notifications import notify_submission
+
+        notify_submission(parcelle)
+
         data = ParcelleSubmitSerializer(parcelle).data
         # Avertissement ANONYME : la localisation tombe-t-elle dans une parcelle
         # déjà validée ? (on ne révèle aucun détail).

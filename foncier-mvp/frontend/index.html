@@ -44,12 +44,14 @@
     <div id="authBox">
       <h2>Connexion</h2>
       <input id="login-username" type="text" placeholder="Nom d'utilisateur" />
+      <input id="login-email" type="email" placeholder="Email (pour être notifié)" />
       <input id="login-password" type="password" placeholder="Mot de passe" />
       <div style="display:flex; gap:8px;">
         <button class="btn-primary" onclick="login()">Se connecter</button>
         <button class="btn-ghost" onclick="register()">Créer un compte</button>
       </div>
-      <p class="hint">Crée un compte (citoyen) ou connecte-toi.</p>
+      <p class="hint">Crée un compte (citoyen) ou connecte-toi. L'email sert à recevoir
+        les notifications de suivi (facultatif pour se connecter).</p>
     </div>
 
     <!-- Déclaration d'une parcelle (si connecté) -->
@@ -58,7 +60,8 @@
       <h2>Déclarer une parcelle</h2>
       <p class="hint">1) Indique la localisation : clique sur la carte ou « Ma position ».<br>
          2) Enregistre, puis ajoute tes documents.<br>
-         <i>Une référence officielle est attribuée automatiquement.</i></p>
+         <i>Une référence officielle est attribuée automatiquement.
+         Le tracé du terrain sera réalisé par un géomètre.</i></p>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn-ghost" onclick="useMyLocation()">📍 Ma position</button>
         <button class="btn-ghost" onclick="clearMarker()">Effacer le point</button>
@@ -111,10 +114,11 @@
     }
     async function register() {
       const username = document.getElementById("login-username").value.trim();
+      const email = document.getElementById("login-email").value.trim();
       const password = document.getElementById("login-password").value;
       if (!username || !password) { setMsg("Nom d'utilisateur et mot de passe (8+ caractères) requis.", "warn"); return; }
       try {
-        const res = await fetch(AUTH + "register/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
+        const res = await fetch(AUTH + "register/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, email, password }) });
         const d = await res.json();
         if (!res.ok) { setMsg("Inscription refusée : " + JSON.stringify(d), "warn"); return; }
         token = d.token; localStorage.setItem("foncier_token", token);

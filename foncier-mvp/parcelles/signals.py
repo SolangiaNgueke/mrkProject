@@ -24,41 +24,45 @@ def recompute_parcelle(parcelle):
     if not Parcelle.objects.filter(pk=parcelle.pk).exists():
         return
 
+    old_status = (
+        Parcelle.objects.filter(pk=parcelle.pk).values_list("status", flat=True).first()
+    )
+    fields = ["status", "reliability", "updated_at"]
+
     # Un litige actif est PRIORITAIRE : la parcelle reste en rouge tant que le
     # chevauchement n'est pas résolu.
     if _has_active_conflict(parcelle):
         parcelle.status = Parcelle.Status.DISPUTED
         parcelle.reliability = Parcelle.Reliability.LOW
-        parcelle.save(update_fields=["status", "reliability", "updated_at"])
-        return
-
-    has_delim = Delimitation.objects.filter(parcelle=parcelle).exists()
-    verif = VerificationDossier.objects.filter(parcelle=parcelle).first()
-    decision = verif.decision if verif else None
-
-    fields = ["status", "reliability", "updated_at"]
-
-    if decision == VerificationDossier.Decision.REJECTED:
-        parcelle.status = Parcelle.Status.REJECTED
-        parcelle.reliability = Parcelle.Reliability.LOW
-    elif decision == VerificationDossier.Decision.APPROVED and has_delim:
-        # Double validation OK : délimitation + vérification juridique.
-        parcelle.status = Parcelle.Status.VALIDATED
-        parcelle.reliability = Parcelle.Reliability.HIGH
-        delim = Delimitation.objects.filter(parcelle=parcelle).first()
-        if delim and delim.validated_geometry:
-            parcelle.geometry = delim.validated_geometry
-            fields += ["geometry", "surface_m2"]
-    elif has_delim:
-        # Délimitation faite, vérification juridique en cours.
-        parcelle.status = Parcelle.Status.VERIFYING
-        parcelle.reliability = Parcelle.Reliability.MEDIUM
     else:
-        # Simplement déclarée par le propriétaire.
-        parcelle.status = Parcelle.Status.SUBMITTED
-        parcelle.reliability = Parcelle.Reliability.LOW
+        has_delim = Delimitation.objects.filter(parcelle=parcelle).exists()
+        verif = VerificationDossier.objects.filter(parcelle=parcelle).first()
+        decision = verif.decision if verif else None
+
+        if decision == VerificationDossier.Decision.REJECTED:
+            parcelle.status = Parcelle.Status.REJECTED
+            parcelle.reliability = Parcelle.Reliability.LOW
+        elif decision == VerificationDossier.Decision.APPROVED and has_delim:
+            parcelle.status = Parcelle.Status.VALIDATED
+            parcelle.reliability = Parcelle.Reliability.HIGH
+            delim = Delimitation.objects.filter(parcelle=parcelle).first()
+            if delim and delim.validated_geometry:
+                parcelle.geometry = delim.validated_geometry
+                fields += ["geometry", "surface_m2"]
+        elif has_delim:
+            parcelle.status = Parcelle.Status.VERIFYING
+            parcelle.reliability = Parcelle.Reliability.MEDIUM
+        else:
+            parcelle.status = Parcelle.Status.SUBMITTED
+            parcelle.reliability = Parcelle.Reliability.LOW
 
     parcelle.save(update_fields=fields)
+
+    # Notifier le propriétaire uniquement si le statut a réellement changé.
+    if parcelle.status != old_status:
+        from .notifications import notify_status_change
+
+        notify_status_change(parcelle)
 
 
 def _overlap_area_m2(geom_a, geom_b):
