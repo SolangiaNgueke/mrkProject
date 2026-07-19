@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tableau de bord — Administration foncière</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f3f4f6; color: #1f2937; }
+    header { background: #1f2d3a; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { font-size: 18px; margin: 0; }
+    header a { color: #93c5fd; text-decoration: none; font-size: 14px; }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 24px 16px 60px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 26px; }
+    .card { background: #fff; border-radius: 12px; padding: 18px; box-shadow: 0 1px 5px rgba(0,0,0,.07); }
+    .card .n { font-size: 30px; font-weight: 700; }
+    .card .l { font-size: 13px; color: #6b7280; margin-top: 4px; }
+    .card.accent-blue .n { color: #3b82f6; }
+    .card.accent-green .n { color: #22c55e; }
+    .card.accent-red .n { color: #ef4444; }
+    .card.accent-amber .n { color: #f59e0b; }
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .chart-box { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 5px rgba(0,0,0,.07); }
+    .chart-box h2 { font-size: 15px; margin: 0 0 14px; }
+    #msg { padding: 40px; text-align: center; color: #b91c1c; font-size: 15px; }
+    @media (max-width: 720px) { .charts { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Tableau de bord — Administration foncière</h1>
+    <a href="index.html">← Carte publique</a>
+  </header>
+
+  <div class="wrap">
+    <div id="msg" style="display:none"></div>
+    <div id="content" style="display:none">
+      <div class="cards" id="cards"></div>
+      <div class="charts">
+        <div class="chart-box"><h2>Parcelles par statut</h2><canvas id="pieStatut"></canvas></div>
+        <div class="chart-box"><h2>Dossiers à traiter</h2><canvas id="barTodo"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = "http://localhost:8000/api/";
+    const token = localStorage.getItem("foncier_token");
+
+    const STATUT_LABELS = {
+      draft: "Brouillon", submitted: "Soumises", verifying: "En vérification",
+      validated: "Validées", rejected: "Rejetées", disputed: "En litige"
+    };
+    const STATUT_COLORS = {
+      draft: "#d1d5db", submitted: "#f59e0b", verifying: "#3b82f6",
+      validated: "#22c55e", rejected: "#6b7280", disputed: "#ef4444"
+    };
+
+    function showError(txt) {
+      const m = document.getElementById("msg");
+      m.textContent = txt; m.style.display = "block";
+    }
+
+    async function load() {
+      if (!token) { showError("Connecte-toi en administrateur (sur la carte) pour accéder au tableau de bord."); return; }
+      let res;
+      try {
+        res = await fetch(API + "stats/", { headers: { "Authorization": "Token " + token } });
+      } catch (e) { showError("Erreur réseau : " + e); return; }
+      if (res.status === 403) { showError("Accès réservé aux administrateurs."); return; }
+      if (!res.ok) { showError("Impossible de charger les statistiques."); return; }
+      const d = await res.json();
+      render(d);
+    }
+
+    function render(d) {
+      document.getElementById("content").style.display = "block";
+
+      // --- Cartes de chiffres ---
+      const s = d.par_statut;
+      const cards = [
+        { n: d.parcelles_total, l: "Parcelles au total", cls: "" },
+        { n: s.verifying || 0, l: "En vérification", cls: "accent-blue" },
+        { n: s.validated || 0, l: "Validées", cls: "accent-green" },
+        { n: d.litiges_actifs, l: "Litiges actifs", cls: "accent-red" },
+        { n: d.signalements_a_examiner, l: "Signalements à examiner", cls: "accent-amber" },
+      ];
+      document.getElementById("cards").innerHTML = cards.map(c =>
+        `<div class="card ${c.cls}"><div class="n">${c.n}</div><div class="l">${c.l}</div></div>`).join("");
+
+      // --- Camembert : parcelles par statut (on ignore les statuts à 0) ---
+      const entries = Object.entries(s).filter(([k, v]) => v > 0);
+      new Chart(document.getElementById("pieStatut"), {
+        type: "doughnut",
+        data: {
+          labels: entries.map(([k]) => STATUT_LABELS[k] || k),
+          datasets: [{ data: entries.map(([, v]) => v), backgroundColor: entries.map(([k]) => STATUT_COLORS[k] || "#999") }]
+        },
+        options: { plugins: { legend: { position: "bottom" } } }
+      });
+
+      // --- Barres : dossiers à traiter ---
+      new Chart(document.getElementById("barTodo"), {
+        type: "bar",
+        data: {
+          labels: ["À tracer (géomètre)", "À valider (notaire)", "Litiges actifs", "Signalements"],
+          datasets: [{
+            data: [d.attente_geometre, d.attente_notaire, d.litiges_actifs, d.signalements_a_examiner],
+            backgroundColor: ["#f59e0b", "#3b82f6", "#ef4444", "#8b5cf6"]
+          }]
+        },
+        options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+      });
+    }
+
+    load();
+  </script>
+</body>
+</html>

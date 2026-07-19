@@ -3,7 +3,15 @@ from django.contrib.gis.admin import GISModelAdmin
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import Conflit, Delimitation, Document, Parcelle, VerificationDossier
+from .models import (
+    AdminBoundary,
+    Conflit,
+    Delimitation,
+    Document,
+    Parcelle,
+    Signalement,
+    VerificationDossier,
+)
 
 
 @admin.register(Parcelle)
@@ -122,3 +130,39 @@ class ConflitAdmin(admin.ModelAdmin):
     def etat(self, obj):
         # True = actif (non résolu)
         return obj.resolved_at is None
+
+
+@admin.register(Signalement)
+class SignalementAdmin(admin.ModelAdmin):
+    """Alerte administrateur : signalements communautaires à examiner.
+    L'admin décide de la suite (il ne met pas la parcelle en litige automatiquement)."""
+
+    list_display = ("id", "parcelle", "motif", "reporter", "en_attente", "created_at")
+    list_filter = ("motif", "resolved_at")
+    readonly_fields = ("parcelle", "reporter", "motif", "comment", "created_at")
+    actions = ("marquer_traite",)
+
+    def has_add_permission(self, request):
+        return False  # créé par les utilisateurs via l'application
+
+    @admin.display(description="À examiner", boolean=True)
+    def en_attente(self, obj):
+        return obj.resolved_at is None
+
+    @admin.action(description="Marquer comme traité")
+    def marquer_traite(self, request, queryset):
+        from django.utils import timezone
+
+        queryset.filter(resolved_at__isnull=True).update(resolved_at=timezone.now())
+
+
+@admin.register(AdminBoundary)
+class AdminBoundaryAdmin(admin.ModelAdmin):
+    """Limites administratives officielles (détection exacte pays/région)."""
+
+    list_display = ("name", "country_code", "region_code", "level")
+    list_filter = ("country_code", "level")
+    search_fields = ("name",)
+
+    def has_module_permission(self, request):
+        return request.user.is_superuser

@@ -1,23 +1,27 @@
 """Détermine le pays et la région administrative d'un point GPS.
 
-MODULE BRANCHABLE : aujourd'hui, géocodage inverse hors-ligne (approximatif,
-basé sur le lieu peuplé le plus proche). Pour une précision maximale, on
-remplacera plus tard le corps de `resolve_location` par une détection par
-polygones de frontières officielles dans PostGIS — sans changer le reste.
+Deux niveaux de précision, du plus exact au plus approximatif :
+
+1. EXACT — polygones officiels de frontières chargés en base (modèle
+   `AdminBoundary`). On teste dans quel polygone tombe réellement le point.
+   Fiable y compris près des frontières. Nécessite d'importer un fichier
+   GeoJSON de limites administratives (commande `import_boundaries`).
+
+2. APPROXIMATIF — géocodage inverse hors-ligne (lieu peuplé le plus proche).
+   Utilisé automatiquement tant qu'aucune frontière n'a été importée.
 """
 
 try:
     import reverse_geocoder as _rg
 
-    _AVAILABLE = True
+    _RG_AVAILABLE = True
 except ImportError:
-    _AVAILABLE = False
+    _RG_AVAILABLE = False
 
 
-# Correspondance région (nom admin1) -> numéro, par pays.
-# À compléter pour d'autres pays au fur et à mesure.
+# Correspondance région (nom admin1) -> numéro, par pays (mode approximatif).
 REGION_CODES = {
-    "TG": {  # Togo : régions numérotées du sud au nord
+    "TG": {
         "Maritime": "1", "Maritime Region": "1",
         "Plateaux": "2", "Plateaux Region": "2",
         "Centrale": "3", "Centrale Region": "3", "Central": "3",
@@ -27,19 +31,42 @@ REGION_CODES = {
 }
 
 
+def _resolve_exact(lon, lat):
+    """Détection par polygones officiels. Retourne (cc, region) ou None."""
+    from django.contrib.gis.geos import Point
+
+    from .models import AdminBoundary
+
+    try:
+        pt = Point(lon, lat, srid=4326)
+        b = AdminBoundary.objects.filter(geometry__contains=pt).order_by("-level").first()
+        if b:
+            return (b.country_code.upper(), b.region_code or "0")
+    except Exception:  # table absente / non migrée
+        return None
+    return None
+
+
+def _resolve_approx(lon, lat):
+    """Détection approximative (lieu peuplé le plus proche)."""
+    if not _RG_AVAILABLE:
+        return ("XX", "0")
+    try:
+        res = _rg.get((lat, lon))
+    except Exception:  # noqa: BLE001
+        return ("XX", "0")
+    cc = (res.get("cc") or "XX").upper()
+    admin1 = res.get("admin1") or ""
+    return (cc, REGION_CODES.get(cc, {}).get(admin1, "0"))
+
+
 def resolve_location(lon, lat):
     """Retourne (code_pays_ISO2, code_region) pour un point (lon, lat).
 
-    Renvoie ('XX', '0') si la détection est indisponible ou inconnue.
+    Utilise les frontières officielles si elles ont été importées,
+    sinon retombe sur la détection approximative.
     """
-    if not _AVAILABLE:
-        return ("XX", "0")
-    try:
-        res = _rg.get((lat, lon))  # requête unique (sans multiprocessing)
-    except Exception:  # noqa: BLE001
-        return ("XX", "0")
-
-    cc = (res.get("cc") or "XX").upper()
-    admin1 = res.get("admin1") or ""
-    region = REGION_CODES.get(cc, {}).get(admin1, "0")
-    return (cc, region)
+    exact = _resolve_exact(lon, lat)
+    if exact:
+        return exact
+    return _resolve_approx(lon, lat)

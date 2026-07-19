@@ -2,18 +2,22 @@ import hashlib
 import json
 
 from django.contrib.gis.geos import GEOSGeometry
+from django.db.models import Count
 from django.http import FileResponse, Http404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from .geo import polygon_from_points, suggest_utm_epsg, utm_zone_label
-from .models import Delimitation, Document, Parcelle
+from .models import Conflit, Delimitation, Document, Parcelle, Signalement
 from .permissions import IsOwnerOrStaffOrReadOnly
 from .serializers import (
     DocumentSerializer,
     OverlapSerializer,
+    ParcelleMineSerializer,
     ParcellePublicSerializer,
     ParcelleSubmitSerializer,
 )
@@ -249,6 +253,43 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         filename = doc.file.name.split("/")[-1]
         return FileResponse(doc.file.open("rb"), as_attachment=True, filename=filename)
 
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"documents/(?P<doc_id>[0-9]+)",
+        permission_classes=[IsAuthenticated],
+    )
+    def delete_document(self, request, pk=None, doc_id=None):
+        """Suppression ENCADRÉE : le propriétaire (ou un admin) peut supprimer un
+        document uniquement tant que la parcelle est « soumise ». Dès que la
+        vérification a commencé, les documents sont figés (intégrité anti-fraude)."""
+        try:
+            parcelle = Parcelle.objects.get(pk=pk)
+        except Parcelle.DoesNotExist:
+            raise Http404
+
+        user = request.user
+        is_owner = parcelle.owner_id == user.id
+        is_admin = user.is_superuser or user.role == user.Role.ADMIN
+        if not (is_owner or is_admin):
+            return Response({"detail": "Accès refusé."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Encadrement : une fois la vérification lancée, on fige (sauf admin).
+        if not is_admin and parcelle.status != Parcelle.Status.SUBMITTED:
+            return Response(
+                {"detail": "Documents figés : la vérification a déjà commencé."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            doc = parcelle.documents.get(pk=doc_id)
+        except Document.DoesNotExist:
+            raise Http404
+
+        doc.file.delete(save=False)  # supprime le fichier du disque
+        doc.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     # ------------------------------------------------------------------ #
     #  Délimitation par coordonnées (géomètre)                            #
     # ------------------------------------------------------------------ #
@@ -399,3 +440,77 @@ class ParcelleViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         return Response({"count": len(points), "points": points})
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="mine",
+        permission_classes=[IsAuthenticated],
+    )
+    def mine(self, request):
+        """Liste les parcelles du propriétaire connecté (même privées/non tracées)."""
+        qs = Parcelle.objects.filter(owner=request.user).order_by("-created_at")
+        return Response(ParcelleMineSerializer(qs, many=True).data)
+
+    # ------------------------------------------------------------------ #
+    #  Signalement communautaire                                          #
+    # ------------------------------------------------------------------ #
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="report",
+        permission_classes=[IsAuthenticated],
+    )
+    def report(self, request, pk=None):
+        """Tout utilisateur connecté signale une parcelle suspecte.
+        Crée une alerte pour l'administrateur (n'affecte PAS le statut)."""
+        try:
+            parcelle = Parcelle.objects.get(pk=pk)
+        except Parcelle.DoesNotExist:
+            raise Http404
+
+        motif = request.data.get("motif") or Signalement.Motif.AUTRE
+        comment = request.data.get("comment", "")
+        signalement = Signalement.objects.create(
+            parcelle=parcelle,
+            reporter=request.user,
+            motif=motif,
+            comment=comment,
+        )
+
+        from .notifications import notify_admins_new_report
+
+        notify_admins_new_report(signalement)
+
+        return Response(
+            {"detail": "Signalement enregistré. Merci, un administrateur va l'examiner."},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class DashboardStats(APIView):
+    """Statistiques de pilotage — RÉSERVÉ aux administrateurs."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        is_admin = user.is_superuser or getattr(user, "role", None) == user.Role.ADMIN
+        if not is_admin:
+            return Response({"detail": "Réservé aux administrateurs."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Comptage des parcelles par statut.
+        raw = {r["status"]: r["c"] for r in Parcelle.objects.values("status").annotate(c=Count("id"))}
+        par_statut = {s.value: raw.get(s.value, 0) for s in Parcelle.Status}
+
+        data = {
+            "parcelles_total": Parcelle.objects.count(),
+            "par_statut": par_statut,
+            "litiges_actifs": Conflit.objects.filter(resolved_at__isnull=True).count(),
+            "signalements_a_examiner": Signalement.objects.filter(resolved_at__isnull=True).count(),
+            # Dossiers en attente d'action humaine :
+            "attente_geometre": par_statut.get(Parcelle.Status.SUBMITTED.value, 0),   # à tracer
+            "attente_notaire": par_statut.get(Parcelle.Status.VERIFYING.value, 0),    # à valider juridiquement
+        }
+        return Response(data)

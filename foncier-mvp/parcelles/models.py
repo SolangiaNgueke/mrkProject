@@ -187,3 +187,55 @@ class Conflit(models.Model):
         a = self.parcelle_a.reference or self.parcelle_a_id
         b = self.parcelle_b.reference or self.parcelle_b_id
         return f"Conflit {a} × {b} [{etat}]"
+
+class Signalement(models.Model):
+    """Signalement communautaire d'une parcelle suspecte (§11 du blueprint).
+
+    Déposé par tout utilisateur connecté. Crée une ALERTE pour l'administrateur,
+    qui examine et décide de la suite (il ne met PAS la parcelle en litige
+    automatiquement — c'est une décision humaine)."""
+
+    class Motif(models.TextChoices):
+        DOUBLE_VENTE = "double_vente", "Double vente / usurpation"
+        FAUX_DOCUMENT = "faux_document", "Faux document"
+        LIMITES = "limites", "Limites contestées"
+        AUTRE = "autre", "Autre"
+
+    parcelle = models.ForeignKey(
+        Parcelle, on_delete=models.CASCADE, related_name="signalements"
+    )
+    reporter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="signalements",
+    )
+    motif = models.CharField(max_length=20, choices=Motif.choices, default=Motif.AUTRE)
+    comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)  # null = à examiner
+
+    def __str__(self):
+        return f"Signalement {self.parcelle.reference} ({self.get_motif_display()})"
+
+
+class AdminBoundary(models.Model):
+    """Limite administrative officielle (pays ou région), utilisée pour
+    déterminer EXACTEMENT dans quel pays/région tombe un point GPS.
+
+    Importée depuis un fichier GeoJSON via `manage.py import_boundaries`.
+    Tant que cette table est vide, la détection reste approximative.
+    """
+
+    name = models.CharField(max_length=120)
+    country_code = models.CharField(max_length=2, db_index=True)   # ex. TG
+    region_code = models.CharField(max_length=10, blank=True, default="")  # ex. 1
+    level = models.PositiveSmallIntegerField(default=0)  # 0 = pays, 1 = région
+    geometry = gis_models.MultiPolygonField(srid=4326)
+
+    class Meta:
+        verbose_name = "Limite administrative"
+        verbose_name_plural = "Limites administratives"
+
+    def __str__(self):
+        return f"{self.name} ({self.country_code}{'-' + self.region_code if self.region_code else ''})"

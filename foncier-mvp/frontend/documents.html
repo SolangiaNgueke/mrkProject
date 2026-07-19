@@ -122,7 +122,7 @@
       }
       // réinitialise les champs
       inputs.forEach(i => { i.value = ""; });
-      setMsg(`${ok}/${jobs.length} document(s) ajouté(s) .`, ok ? "ok" : "warn");
+      setMsg(`${ok}/${jobs.length} document(s) ajouté(s) (intégrité garantie par hash SHA-256).`, ok ? "ok" : "warn");
       loadDocuments();
     }
 
@@ -146,11 +146,35 @@
           btn.className = "btn-ghost";
           btn.textContent = "Télécharger";
           btn.onclick = () => downloadDocument(doc.id);
+          const del = document.createElement("button");
+          del.className = "btn-ghost";
+          del.style.color = "#b91c1c";
+          del.style.marginLeft = "6px";
+          del.textContent = "Supprimer";
+          del.onclick = () => deleteDocument(doc.id);
+          const actions = document.createElement("div");
+          actions.appendChild(btn);
+          actions.appendChild(del);
           row.appendChild(left);
-          row.appendChild(btn);
+          row.appendChild(actions);
           list.appendChild(row);
         });
       } catch (err) { list.innerHTML = "<span class='warn'>Erreur réseau.</span>"; }
+    }
+
+    async function deleteDocument(docId) {
+      if (!confirm("Supprimer ce document ? (possible uniquement tant que la parcelle n'est pas en vérification)")) return;
+      try {
+        const res = await fetch(`${API}${parcelId}/documents/${docId}/`, { method: "DELETE", headers: authHeaders() });
+        if (res.status === 403) {
+          const d = await res.json().catch(() => ({}));
+          setMsg(d.detail || "Suppression impossible : documents figés.", "warn");
+          return;
+        }
+        if (res.status !== 204 && !res.ok) { setMsg("Suppression impossible.", "warn"); return; }
+        setMsg("Document supprimé.", "ok");
+        loadDocuments();
+      } catch (e) { setMsg("Erreur réseau : " + e, "warn"); }
     }
 
     async function downloadDocument(docId) {

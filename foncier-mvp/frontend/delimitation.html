@@ -77,6 +77,9 @@
       <h2>Aperçu du tracé reprojeté</h2>
       <div id="result" class="hint">Le tracé apparaîtra ici après calcul.</div>
       <div id="map"></div>
+      <button id="basemap-btn" onclick="toggleBasemap()"
+        style="margin-top:8px;padding:7px 12px;border:0;border-radius:7px;
+               background:#eef;color:#2563eb;font-size:13px;cursor:pointer">🛰️ Satellite</button>
     </div>
   </div>
 
@@ -206,15 +209,36 @@
 
     // --- Carte d'aperçu (satellite) ---
     let map;
+    const STYLE_PLAN = "https://tiles.openfreemap.org/styles/liberty";
+    const STYLE_SAT = {
+      version: 8,
+      sources: { sat: { type: "raster",
+        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+        tileSize: 256, attribution: "Imagery © Esri" } },
+      layers: [{ id: "sat", type: "raster", source: "sat" }]
+    };
+    let vueSatellite = false;
+    let dernierTrace = null;   // mémorise le tracé pour le réafficher après bascule
+
     function initMap() {
       // Fond de carte clair type plan (comme la carte publique).
       map = new maplibregl.Map({
         container: "map",
-        style: "https://tiles.openfreemap.org/styles/liberty",
+        style: STYLE_PLAN,
         center: [1.2, 6.13], zoom: 14
       });
     }
+
+    function toggleBasemap() {
+      vueSatellite = !vueSatellite;
+      map.setStyle(vueSatellite ? STYLE_SAT : STYLE_PLAN);
+      document.getElementById("basemap-btn").textContent = vueSatellite ? "🗺️ Plan" : "🛰️ Satellite";
+      // Le changement de style efface les couches : on redessine le tracé.
+      map.once("styledata", () => { if (dernierTrace) showOnMap(dernierTrace); });
+    }
+
     function showOnMap(geometry) {
+      dernierTrace = geometry;
       const fc = { type: "FeatureCollection", features: [{ type: "Feature", geometry, properties: {} }] };
       if (map.getSource("poly")) { map.getSource("poly").setData(fc); }
       else {

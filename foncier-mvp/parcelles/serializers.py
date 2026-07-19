@@ -62,3 +62,17 @@ class DocumentSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         path = f"/api/parcelles/{obj.parcelle_id}/documents/{obj.id}/download/"
         return request.build_absolute_uri(path) if request else path
+
+
+class ParcelleMineSerializer(serializers.ModelSerializer):
+    """Liste des parcelles du propriétaire connecté (page « Mes parcelles »)."""
+
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    reliability_display = serializers.CharField(source="get_reliability_display", read_only=True)
+
+    class Meta:
+        model = Parcelle
+        fields = [
+            "id", "reference", "status", "status_display",
+            "reliability", "reliability_display", "surface_m2", "created_at",
+        ]
