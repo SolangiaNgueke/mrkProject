@@ -268,20 +268,40 @@
 
     function showParcelInfo(feature, lngLat) {
       const p = feature.properties || {};
-      const surface = p.surface_m2 ? `${Math.round(p.surface_m2)} m² (${(p.surface_m2/10000).toFixed(2)} ha)` : "—";
-      // Infos PUBLIQUES uniquement — jamais le nom du propriétaire.
+      const ligne = (label, valeur) =>
+        valeur === null || valeur === undefined || valeur === "" ? "" :
+        `<div style="display:flex;justify-content:space-between;gap:14px;padding:2px 0">
+           <span style="color:#6b7280">${label}</span><span style="font-weight:600">${valeur}</span></div>`;
+
+      const surface = p.surface_m2
+        ? `${Math.round(p.surface_m2).toLocaleString("fr-FR")} m² (${Number(p.surface_ha).toFixed(2)} ha)` : null;
+      const dateFr = (iso) => { try { return new Date(iso).toLocaleDateString("fr-FR",
+        { day: "2-digit", month: "short", year: "numeric" }); } catch (e) { return null; } };
+
+      // Informations PUBLIQUES uniquement. Le nom du propriétaire n'apparaît
+      // que s'il a explicitement consenti à sa publication.
       const html =
-        `<div style="font-family:system-ui;font-size:13px;min-width:190px">
-           <div style="font-weight:700;margin-bottom:4px">${p.reference || "Réf. inconnue"}</div>
-           <div>Statut : ${STATUS_LABELS[p.status] || p.status}</div>
-           <div>Fiabilité : ${RELIABILITY_LABELS[p.reliability] || p.reliability}</div>
-           <div>Dimension : ${surface}</div>
+        `<div style="font-family:system-ui;font-size:13px;min-width:250px">
+           <div style="font-weight:700;font-size:15px;margin-bottom:2px">${p.reference || "Réf. inconnue"}</div>
+           <div style="color:#6b7280;font-size:11.5px;margin-bottom:8px">Fiche publique de la parcelle</div>
+           ${ligne("Statut", p.status_display || STATUS_LABELS[p.status] || p.status)}
+           ${ligne("Fiabilité", p.reliability_display || RELIABILITY_LABELS[p.reliability] || p.reliability)}
+           ${ligne("Superficie", surface)}
+           ${ligne("Périmètre", p.perimetre_m ? p.perimetre_m + " m" : null)}
+           ${ligne("Bornes", p.nb_bornes)}
+           ${ligne("Région", p.region)}
+           ${ligne("Déclarée le", dateFr(p.date_declaration))}
+           ${ligne("Mise à jour", dateFr(p.date_maj))}
+           ${ligne("Propriétaire", p.proprietaire)}
+           ${p.proprietaire ? "" :
+             `<div style="color:#9ca3af;font-size:11px;margin-top:6px;font-style:italic">
+                Identité du propriétaire non publique</div>`}
            <button onclick="openReport(${feature.id}, '${p.reference || ""}')"
-             style="margin-top:8px;padding:6px 10px;border:0;border-radius:6px;background:#ef4444;color:#fff;cursor:pointer">
+             style="margin-top:10px;width:100%;padding:6px 10px;border:0;border-radius:6px;background:#ef4444;color:#fff;cursor:pointer">
              Signaler cette parcelle
            </button>
          </div>`;
-      new maplibregl.Popup().setLngLat(lngLat).setHTML(html).addTo(map);
+      new maplibregl.Popup({ maxWidth: "300px" }).setLngLat(lngLat).setHTML(html).addTo(map);
     }
 
     // Curseur "main" au survol d'une parcelle

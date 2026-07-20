@@ -26,6 +26,37 @@ try:
 except ImportError:
     _PIL_AVAILABLE = False
 
+try:
+    import fitz  # PyMuPDF : conversion des pages PDF en images
+
+    _PDF_AVAILABLE = True
+except ImportError:
+    _PDF_AVAILABLE = False
+
+# Nombre maximal de pages analysées dans un PDF (les plans tiennent sur 1-2 pages).
+MAX_PAGES_PDF = 5
+
+
+def est_pdf(donnees):
+    return donnees[:5] == b"%PDF-"
+
+
+def pdf_en_images(donnees, dpi=300):
+    """Convertit les premières pages d'un PDF en images PNG (haute résolution).
+
+    300 dpi est un bon compromis : assez net pour l'OCR sans être trop lourd.
+    """
+    if not _PDF_AVAILABLE:
+        raise RuntimeError(
+            "Lecture PDF indisponible : la librairie PyMuPDF n'est pas installée."
+        )
+    images = []
+    with fitz.open(stream=donnees, filetype="pdf") as doc:
+        for page in list(doc)[:MAX_PAGES_PDF]:
+            pix = page.get_pixmap(dpi=dpi)
+            images.append(pix.tobytes("png"))
+    return images
+
 
 # --------------------------------------------------------------------- #
 #  Prétraitement de l'image (améliore nettement Tesseract)               #
@@ -196,6 +227,16 @@ def _parse_points(text):
 def _ocr_tesseract(image_bytes):
     if not _PIL_AVAILABLE:
         raise RuntimeError("Dépendances OCR (pytesseract/Pillow) manquantes.")
+
+    # PDF : on analyse chaque page et on garde la meilleure lecture.
+    if est_pdf(image_bytes):
+        meilleur = []
+        for page in pdf_en_images(image_bytes):
+            points = _ocr_tesseract(page)
+            if len(points) > len(meilleur):
+                meilleur = points
+        return meilleur
+
     img = _preprocess(image_bytes)
     # --psm 6 : bloc de texte uniforme (le réglage le plus fiable ici).
     # Pas de liste de caractères imposée : elle empêchait certaines lectures.
@@ -210,14 +251,30 @@ def _ocr_google_vision(image_bytes):
     key = os.environ.get("GOOGLE_VISION_API_KEY", "")
     if not key:
         raise RuntimeError("GOOGLE_VISION_API_KEY absente : configure-la dans .env")
-    payload = {
-        "requests": [{
-            "image": {"content": base64.b64encode(image_bytes).decode()},
-            "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
-        }]
-    }
+    contenu = base64.b64encode(image_bytes).decode()
+
+    # Cloud Vision lit nativement les PDF via un point d'entrée dédié
+    # (files:annotate), ce qui évite de rasteriser côté serveur.
+    if est_pdf(image_bytes):
+        url = f"https://vision.googleapis.com/v1/files:annotate?key={key}"
+        payload = {
+            "requests": [{
+                "inputConfig": {"content": contenu, "mimeType": "application/pdf"},
+                "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
+                "pages": list(range(1, MAX_PAGES_PDF + 1)),
+            }]
+        }
+    else:
+        url = f"https://vision.googleapis.com/v1/images:annotate?key={key}"
+        payload = {
+            "requests": [{
+                "image": {"content": contenu},
+                "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
+            }]
+        }
+
     req = urllib.request.Request(
-        f"https://vision.googleapis.com/v1/images:annotate?key={key}",
+        url,
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
     )
@@ -227,7 +284,15 @@ def _ocr_google_vision(image_bytes):
     r = (data.get("responses") or [{}])[0]
     if r.get("error"):
         raise RuntimeError(r["error"].get("message", "Erreur Cloud Vision"))
-    texte_brut = (r.get("fullTextAnnotation") or {}).get("text", "")
+
+    # Pour un PDF, la réponse contient une sous-réponse par page.
+    pages = r.get("responses")
+    if pages:
+        textes = [(p.get("fullTextAnnotation") or {}).get("text", "") for p in pages]
+        texte_brut = "\n".join(t for t in textes if t)
+        data = {"responses": pages}   # pour la reconstruction des lignes
+    else:
+        texte_brut = (r.get("fullTextAnnotation") or {}).get("text", "")
 
     # On essaie TOUTES les stratégies et on garde celle qui trouve le plus de
     # points (s'arrêter à la première donnait des tableaux incomplets).
