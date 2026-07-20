@@ -60,8 +60,13 @@ def recompute_parcelle(parcelle):
 
     # Notifier le propriétaire uniquement si le statut a réellement changé.
     if parcelle.status != old_status:
+        from .audit import journaliser
         from .notifications import notify_status_change
 
+        journaliser(
+            "statut_change", parcelle=parcelle,
+            ancien=old_status, nouveau=parcelle.status,
+        )
         notify_status_change(parcelle)
 
 
@@ -96,6 +101,9 @@ def recompute_conflicts(parcelle):
         if not still:
             c.resolved_at = timezone.now()
             c.save(update_fields=["resolved_at"])
+            from .audit import journaliser
+
+            journaliser("litige_resolu", parcelle=parcelle, avec=autre.reference or autre.pk)
 
     # 2) Créer / mettre à jour les conflits pour les chevauchements actuels.
     if parcelle.geometry is not None:
@@ -114,6 +122,12 @@ def recompute_conflicts(parcelle):
                 existing.save(update_fields=["overlap_area_m2"])
             else:
                 Conflit.objects.create(parcelle_a=a, parcelle_b=b, overlap_area_m2=area)
+                from .audit import journaliser
+
+                journaliser(
+                    "litige_ouvert", parcelle=parcelle,
+                    avec=autre.reference or autre.pk, surface_m2=area,
+                )
 
     # 3) Recalculer le statut de toutes les parcelles impliquées.
     for p in impliquees.values():

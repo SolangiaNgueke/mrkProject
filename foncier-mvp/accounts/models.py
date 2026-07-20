@@ -16,6 +16,8 @@ class User(AbstractUser):
     )
     phone = models.CharField(max_length=30, blank=True)
     kyc_verified = models.BooleanField(default=False)
+    # L'adresse email a-t-elle été confirmée via le lien envoyé ?
+    email_verified = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.username} ({self.get_role_display()})"

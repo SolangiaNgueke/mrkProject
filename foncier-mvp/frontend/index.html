@@ -80,6 +80,9 @@
     <!-- Déclaration d'une parcelle (si connecté) -->
     <div id="parcelBox" class="hidden">
       <div id="userbar"></div>
+      <div id="emailBanner" style="display:none;background:#fef3c7;border:1px solid #fcd34d;
+           color:#92400e;padding:8px 10px;border-radius:7px;font-size:12.5px;
+           line-height:1.45;margin:8px 0"></div>
       <h2>Déclarer une parcelle</h2>
       <p class="hint">1) Indique la localisation : clique sur la carte ou « Ma position ».<br>
          2) Enregistre, puis ajoute tes documents.<br>
@@ -131,6 +134,28 @@
       document.getElementById("parcelBox").classList.remove("hidden");
       document.getElementById("userbar").innerHTML =
         `Connecté : <b>${user.username}</b> (${user.role_display})`;
+      majBandeauEmail(user);
+    }
+
+    // Rappel non bloquant : l'utilisateur peut tout faire, mais il ne recevra
+    // pas les notifications tant que son adresse n'est pas confirmée.
+    function majBandeauEmail(user) {
+      const b = document.getElementById("emailBanner");
+      if (!user || user.email_verified || !user.email) { b.style.display = "none"; return; }
+      b.style.display = "block";
+      b.innerHTML =
+        `⚠️ Adresse email non confirmée — tu ne recevras pas les notifications de suivi.
+         <a href="#" onclick="renvoyerVerification();return false;"
+            style="color:#1d4ed8;font-weight:600">Renvoyer le lien</a>`;
+    }
+
+    async function renvoyerVerification() {
+      const b = document.getElementById("emailBanner");
+      try {
+        const res = await fetch(AUTH + "resend-verification/", { method: "POST", headers: authHeaders() });
+        const d = await res.json();
+        b.textContent = d.detail || "Lien renvoyé.";
+      } catch (e) { b.textContent = "Erreur réseau."; }
     }
     function showLoggedOut() {
       document.getElementById("authBox").classList.remove("hidden");

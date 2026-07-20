@@ -239,3 +239,57 @@ class AdminBoundary(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.country_code}{'-' + self.region_code if self.region_code else ''})"
+
+
+class AuditLog(models.Model):
+    """Journal d'audit INALTÉRABLE (§17 du blueprint).
+
+    Trace chaque action sensible : qui, quoi, quand. Les entrées ne peuvent être
+    ni modifiées ni supprimées (verrouillé au niveau du modèle et de l'admin).
+    Chaque entrée est chaînée à la précédente par un hash : si une ligne était
+    altérée directement en base, la chaîne serait rompue et détectable.
+    """
+
+    class Action(models.TextChoices):
+        PARCELLE_DECLAREE = "parcelle_declaree", "Parcelle déclarée"
+        DOCUMENT_AJOUTE = "document_ajoute", "Document ajouté"
+        DOCUMENT_SUPPRIME = "document_supprime", "Document supprimé"
+        TRACE_VALIDE = "trace_valide", "Tracé validé par le géomètre"
+        VERIFICATION = "verification", "Décision de vérification"
+        STATUT_CHANGE = "statut_change", "Changement de statut"
+        LITIGE_OUVERT = "litige_ouvert", "Litige ouvert"
+        LITIGE_RESOLU = "litige_resolu", "Litige résolu"
+        SIGNALEMENT = "signalement", "Signalement déposé"
+
+    action = models.CharField(max_length=32, choices=Action.choices, db_index=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="audit_entries",
+    )
+    actor_label = models.CharField(max_length=150, blank=True)  # conservé même si le compte est supprimé
+    parcelle = models.ForeignKey(
+        Parcelle, on_delete=models.SET_NULL, null=True, blank=True, related_name="audit_entries"
+    )
+    parcelle_ref = models.CharField(max_length=20, blank=True)  # référence figée
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    # Chaînage cryptographique : empreinte de cette entrée + celle de la précédente.
+    prev_hash = models.CharField(max_length=64, blank=True)
+    entry_hash = models.CharField(max_length=64, blank=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Entrée d'audit"
+        verbose_name_plural = "Journal d'audit"
+
+    def __str__(self):
+        return f"{self.created_at:%d/%m/%Y %H:%M} — {self.get_action_display()} ({self.parcelle_ref or '—'})"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError("Le journal d'audit est inaltérable : modification interdite.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("Le journal d'audit est inaltérable : suppression interdite.")

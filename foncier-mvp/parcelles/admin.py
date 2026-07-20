@@ -5,6 +5,7 @@ from django.utils.html import format_html
 
 from .models import (
     AdminBoundary,
+    AuditLog,
     Conflit,
     Delimitation,
     Document,
@@ -112,6 +113,13 @@ class VerificationDossierAdmin(admin.ModelAdmin):
             obj.decided_at = timezone.now()
         super().save_model(request, obj, form, change)
 
+        from .audit import journaliser
+
+        journaliser(
+            "verification", actor=request.user, parcelle=obj.parcelle,
+            decision=obj.decision,
+        )
+
 
 @admin.register(Conflit)
 class ConflitAdmin(admin.ModelAdmin):
@@ -166,3 +174,36 @@ class AdminBoundaryAdmin(admin.ModelAdmin):
 
     def has_module_permission(self, request):
         return request.user.is_superuser
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    """Journal d'audit : consultation seule, aucune modification possible."""
+
+    list_display = ("created_at", "action", "actor_label", "parcelle_ref", "resume")
+    list_filter = ("action", "created_at")
+    search_fields = ("actor_label", "parcelle_ref")
+    readonly_fields = (
+        "action", "actor", "actor_label", "parcelle", "parcelle_ref",
+        "details", "created_at", "prev_hash", "entry_hash",
+    )
+    date_hierarchy = "created_at"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # inaltérable, même pour un superuser
+
+    def has_module_permission(self, request):
+        u = request.user
+        return u.is_superuser or getattr(u, "role", None) == u.Role.ADMIN
+
+    @admin.display(description="Détails")
+    def resume(self, obj):
+        if not obj.details:
+            return "—"
+        return ", ".join(f"{k} : {v}" for k, v in list(obj.details.items())[:3])

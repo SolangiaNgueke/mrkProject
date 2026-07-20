@@ -3,9 +3,23 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 DEBUG = os.environ.get("DEBUG", "1") == "1"
-ALLOWED_HOSTS = ["*"]  # à restreindre en production
+
+# En production (DEBUG=0), la clé secrète DOIT venir de l'environnement (.env) :
+# le serveur refuse de démarrer avec la clé de développement.
+SECRET_KEY = os.environ.get("SECRET_KEY", "" if not DEBUG else "dev-secret-change-me")
+if not DEBUG and (not SECRET_KEY or SECRET_KEY == "dev-secret-change-me"):
+    raise RuntimeError(
+        "SECRET_KEY manquante ou non modifiée. Définis-la dans .env avant de passer en production. "
+        "Génère-la avec : python -c \"import secrets; print(secrets.token_urlsafe(50))\""
+    )
+
+# Hôtes autorisés : tout en dev, liste explicite en production (ALLOWED_HOSTS
+# dans .env, séparés par des virgules — ex. foncier.tg,www.foncier.tg).
+_hosts = os.environ.get("ALLOWED_HOSTS", "").strip()
+ALLOWED_HOSTS = ["*"] if DEBUG else [h.strip() for h in _hosts.split(",") if h.strip()]
+if not DEBUG and not ALLOWED_HOSTS:
+    raise RuntimeError("ALLOWED_HOSTS doit être défini dans .env en production.")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -91,13 +105,33 @@ REST_FRAMEWORK = {
     ],
 }
 
-# CORS : autorise la page carte servie en local à appeler l'API
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5500",
-    "http://127.0.0.1:5500",
-    "http://localhost:8000",
-]
-CORS_ALLOW_ALL_ORIGINS = DEBUG  # pratique en dev uniquement
+# CORS : en dev, on autorise la page carte servie en local.
+# En production, seule la liste CORS_ORIGINS du .env est acceptée.
+_cors = os.environ.get("CORS_ORIGINS", "").strip()
+CORS_ALLOWED_ORIGINS = (
+    ["http://localhost:5500", "http://127.0.0.1:5500", "http://localhost:8000"]
+    if DEBUG
+    else [o.strip() for o in _cors.split(",") if o.strip()]
+)
+CORS_ALLOW_ALL_ORIGINS = DEBUG  # jamais en production
+CORS_ALLOW_CREDENTIALS = True
+
+# ------------------------------------------------------------------ #
+#  Durcissement HTTPS / cookies (actif uniquement en production)      #
+# ------------------------------------------------------------------ #
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True                # force le HTTPS
+    SESSION_COOKIE_SECURE = True              # cookies envoyés en HTTPS seulement
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000            # 1 an
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"
+    X_FRAME_OPTIONS = "DENY"                  # anti-clickjacking
+    # Derrière un proxy (nginx, Render, Railway…) qui termine le TLS :
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    CSRF_TRUSTED_ORIGINS = [o for o in CORS_ALLOWED_ORIGINS if o.startswith("https://")]
 
 # ------------------------------------------------------------------ #
 #  Email (notifications aux propriétaires)                            #

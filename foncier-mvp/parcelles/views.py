@@ -111,9 +111,11 @@ class ParcelleViewSet(viewsets.ModelViewSet):
             owner=request.user, status=Parcelle.Status.SUBMITTED
         )
 
-        # Accusé de réception au propriétaire.
+        # Accusé de réception au propriétaire + journal d'audit.
+        from .audit import journaliser
         from .notifications import notify_submission
 
+        journaliser("parcelle_declaree", actor=request.user, parcelle=parcelle)
         notify_submission(parcelle)
 
         data = ParcelleSubmitSerializer(parcelle).data
@@ -229,6 +231,13 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         doc.sha256 = hasher.hexdigest()
         doc.save(update_fields=["sha256"])
 
+        from .audit import journaliser
+
+        journaliser(
+            "document_ajoute", actor=request.user, parcelle=parcelle,
+            type_doc=doc.doc_type, sha256=doc.sha256,
+        )
+
         return Response(
             DocumentSerializer(doc, context={"request": request}).data,
             status=status.HTTP_201_CREATED,
@@ -286,6 +295,12 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         except Document.DoesNotExist:
             raise Http404
 
+        from .audit import journaliser
+
+        journaliser(
+            "document_supprime", actor=request.user, parcelle=parcelle,
+            type_doc=doc.doc_type, sha256=doc.sha256,
+        )
         doc.file.delete(save=False)  # supprime le fichier du disque
         doc.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -392,8 +407,13 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         # Détection AUTOMATIQUE des litiges : crée les alertes (Conflit) pour
         # l'administrateur, passe les parcelles concernées en rouge, résout ce
         # qui ne se chevauche plus. (Réponse au géomètre : conflit anonymisé.)
+        from .audit import journaliser
         from .signals import recompute_conflicts
 
+        journaliser(
+            "trace_valide", actor=request.user, parcelle=parcelle,
+            surface_m2=surface, epsg=int(source_epsg), nb_points=len(points),
+        )
         recompute_conflicts(parcelle)
 
         ids = set(
@@ -479,8 +499,10 @@ class ParcelleViewSet(viewsets.ModelViewSet):
             comment=comment,
         )
 
+        from .audit import journaliser
         from .notifications import notify_admins_new_report
 
+        journaliser("signalement", actor=request.user, parcelle=parcelle, motif=motif)
         notify_admins_new_report(signalement)
 
         return Response(
