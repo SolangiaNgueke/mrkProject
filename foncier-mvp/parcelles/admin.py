@@ -222,5 +222,4 @@ class AuditLogAdmin(admin.ModelAdmin):
     def resume(self, obj):
         if not obj.details:
             return "—"
-        return ", ".join(f"{k} : {v}" for k, v in list(obj.details.items())[:3])
-    
+        return ", ".join(f"{k} : {v}" for k, v in list(obj.details.items())[:3]) 
