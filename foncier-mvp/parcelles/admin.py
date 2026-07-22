@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.contrib.auth import get_user_model
 from django.contrib.gis.admin import GISModelAdmin
 from django.utils import timezone
 from django.utils.html import format_html
@@ -13,6 +14,16 @@ from .models import (
     Signalement,
     VerificationDossier,
 )
+
+Role = get_user_model().Role
+
+
+def _role(user):
+    """Rôle de l'utilisateur, ou None pour un visiteur non connecté.
+    Évite une erreur 500 quand l'admin est consulté sans être authentifié."""
+    if not getattr(user, "is_authenticated", False):
+        return None
+    return getattr(user, "role", None)
 
 
 @admin.register(Parcelle)
@@ -70,9 +81,10 @@ class DocumentAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         u = request.user
-        if u.is_superuser or u.role in (u.Role.NOTARY, u.Role.ADMIN):
+        r = _role(u)
+        if u.is_superuser or r in (Role.NOTARY, Role.ADMIN):
             return qs
-        if u.role == u.Role.SURVEYOR:
+        if r == Role.SURVEYOR:
             return qs.filter(doc_type=Document.DocType.PLAN)
         return qs.none()
 
@@ -204,10 +216,11 @@ class AuditLogAdmin(admin.ModelAdmin):
 
     def has_module_permission(self, request):
         u = request.user
-        return u.is_superuser or getattr(u, "role", None) == u.Role.ADMIN
+        return bool(u.is_superuser or _role(u) == Role.ADMIN)
 
     @admin.display(description="Détails")
     def resume(self, obj):
         if not obj.details:
             return "—"
         return ", ".join(f"{k} : {v}" for k, v in list(obj.details.items())[:3])
+    
