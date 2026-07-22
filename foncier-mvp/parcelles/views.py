@@ -7,7 +7,7 @@ from django.http import FileResponse, Http404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -480,35 +480,70 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         detail=True,
         methods=["post"],
         url_path="report",
-        permission_classes=[IsAuthenticated],
+        permission_classes=[AllowAny],
     )
     def report(self, request, pk=None):
-        """Tout utilisateur connecté signale une parcelle suspecte.
-        Crée une alerte pour l'administrateur (n'affecte PAS le statut)."""
+        """Formulaire de contact au sujet d'une parcelle.
+
+        Deux natures : demande d'information ou signalement. Ouvert à tous ;
+        un moyen de recontact (email) est exigé des visiteurs non connectés.
+        Crée une alerte pour l'administrateur, sans modifier le statut.
+        """
         try:
             parcelle = Parcelle.objects.get(pk=pk)
         except Parcelle.DoesNotExist:
             raise Http404
 
+        type_demande = request.data.get("type_demande") or Signalement.Type.SIGNALEMENT
+        if type_demande not in Signalement.Type.values:
+            type_demande = Signalement.Type.SIGNALEMENT
+
         motif = request.data.get("motif") or Signalement.Motif.AUTRE
-        comment = request.data.get("comment", "")
+        comment = (request.data.get("comment") or "").strip()
+        email = (request.data.get("contact_email") or "").strip()
+        phone = (request.data.get("contact_phone") or "").strip()
+
+        user = request.user if request.user.is_authenticated else None
+        if not user:
+            if not email:
+                return Response(
+                    {"detail": "Indique une adresse email pour que nous puissions te répondre."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif not email:
+            email = user.email or ""
+
+        if not comment:
+            return Response(
+                {"detail": "Précise le motif de ta demande dans le message."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         signalement = Signalement.objects.create(
             parcelle=parcelle,
-            reporter=request.user,
+            reporter=user,
+            type_demande=type_demande,
             motif=motif,
             comment=comment,
+            contact_email=email,
+            contact_phone=phone,
         )
 
         from .audit import journaliser
         from .notifications import notify_admins_new_report
 
-        journaliser("signalement", actor=request.user, parcelle=parcelle, motif=motif)
+        journaliser(
+            "signalement", actor=user, parcelle=parcelle,
+            type_demande=type_demande, motif=motif,
+        )
         notify_admins_new_report(signalement)
 
-        return Response(
-            {"detail": "Signalement enregistré. Merci, un administrateur va l'examiner."},
-            status=status.HTTP_201_CREATED,
+        message = (
+            "Signalement enregistré. Un administrateur va l'examiner."
+            if type_demande == Signalement.Type.SIGNALEMENT
+            else "Demande envoyée. Nous te répondrons à l'adresse indiquée."
         )
+        return Response({"detail": message}, status=status.HTTP_201_CREATED)
 
 
 class DashboardStats(APIView):

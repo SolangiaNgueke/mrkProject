@@ -64,8 +64,9 @@
     </div>
   </div>
 
+  <script src="config.js"></script>
   <script>
-    const API_ROOT = "http://localhost:8000/api/";
+    const API_ROOT = window.API_ROOT;
     const API = API_ROOT + "parcelles/";
     const token = localStorage.getItem("foncier_token");
 

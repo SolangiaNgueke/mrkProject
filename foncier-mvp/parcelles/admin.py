@@ -145,9 +145,13 @@ class SignalementAdmin(admin.ModelAdmin):
     """Alerte administrateur : signalements communautaires à examiner.
     L'admin décide de la suite (il ne met pas la parcelle en litige automatiquement)."""
 
-    list_display = ("id", "parcelle", "motif", "reporter", "en_attente", "created_at")
-    list_filter = ("motif", "resolved_at")
-    readonly_fields = ("parcelle", "reporter", "motif", "comment", "created_at")
+    list_display = ("id", "type_demande", "parcelle", "motif", "contact_email", "en_attente", "created_at")
+    list_filter = ("type_demande", "motif", "resolved_at")
+    search_fields = ("contact_email", "parcelle__reference")
+    readonly_fields = (
+        "type_demande", "parcelle", "reporter", "motif", "comment",
+        "contact_email", "contact_phone", "created_at",
+    )
     actions = ("marquer_traite",)
 
     def has_add_permission(self, request):

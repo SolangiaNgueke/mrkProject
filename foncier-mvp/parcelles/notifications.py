@@ -7,7 +7,9 @@ bloquer le workflow.
 """
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
+from django.db.models import Q
 
 STATUS_MESSAGES = {
     "submitted": "Votre déclaration a bien été enregistrée. Un géomètre réalisera le tracé du terrain.",
@@ -48,3 +50,30 @@ def notify_status_change(parcelle):
         f"— Plateforme foncière"
     )
     _send(parcelle.owner, subject, body)
+
+
+def notify_admins_new_report(signalement):
+    """Alerte les administrateurs qu'un signalement a été déposé."""
+    User = get_user_model()
+    admins = (
+        User.objects.filter(is_active=True)
+        .filter(Q(is_superuser=True) | Q(role=User.Role.ADMIN))
+        .exclude(email="")
+    )
+    emails = [u.email for u in admins if u.email]
+    if not emails:
+        return
+    p = signalement.parcelle
+    nature = signalement.get_type_demande_display()
+    subject = f"[Foncier] {nature} — {p.reference}"
+    body = (
+        f"Une {nature.lower()} a été déposée et attend votre traitement.\n\n"
+        f"Parcelle : {p.reference}\n"
+        f"Motif : {signalement.get_motif_display()}\n"
+        f"Message : {signalement.comment or '—'}\n"
+        f"Répondre à : {signalement.contact_email or '—'}"
+        f"{' / ' + signalement.contact_phone if signalement.contact_phone else ''}\n\n"
+        f"À traiter dans l'administration.\n\n"
+        f"— Plateforme foncière"
+    )
+    send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, emails, fail_silently=True)

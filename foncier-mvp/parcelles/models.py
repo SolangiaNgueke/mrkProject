@@ -189,21 +189,37 @@ class Conflit(models.Model):
         return f"Conflit {a} × {b} [{etat}]"
 
 class Signalement(models.Model):
-    """Signalement communautaire d'une parcelle suspecte (§11 du blueprint).
+    """Demande de contact au sujet d'une parcelle (§11 du blueprint).
 
-    Déposé par tout utilisateur connecté. Crée une ALERTE pour l'administrateur,
-    qui examine et décide de la suite (il ne met PAS la parcelle en litige
-    automatiquement — c'est une décision humaine)."""
+    Deux natures possibles : une simple demande d'information, ou un
+    signalement de fraude. Dans les deux cas, une alerte est créée pour
+    l'administrateur, qui répond ou enquête selon le cas. Aucune décision
+    automatique : la parcelle n'est pas mise en litige d'office.
+    """
+
+    class Type(models.TextChoices):
+        INFO = "info", "Demande d'information"
+        SIGNALEMENT = "signalement", "Signalement"
 
     class Motif(models.TextChoices):
+        # Demandes d'information
+        RENSEIGNEMENT = "renseignement", "Renseignement sur la parcelle"
+        ACHAT = "achat", "Intérêt d'achat ou de location"
+        # Signalements
         DOUBLE_VENTE = "double_vente", "Double vente / usurpation"
         FAUX_DOCUMENT = "faux_document", "Faux document"
         LIMITES = "limites", "Limites contestées"
         AUTRE = "autre", "Autre"
 
+    type_demande = models.CharField(
+        max_length=20, choices=Type.choices, default=Type.SIGNALEMENT, db_index=True
+    )
     parcelle = models.ForeignKey(
         Parcelle, on_delete=models.CASCADE, related_name="signalements"
     )
+    # Coordonnées de réponse (indispensables si l'auteur n'est pas connecté).
+    contact_email = models.EmailField(blank=True)
+    contact_phone = models.CharField(max_length=30, blank=True)
     reporter = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -215,8 +231,13 @@ class Signalement(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)  # null = à examiner
 
+    class Meta:
+        verbose_name = "Demande / signalement"
+        verbose_name_plural = "Demandes & signalements"
+        ordering = ["-created_at"]
+
     def __str__(self):
-        return f"Signalement {self.parcelle.reference} ({self.get_motif_display()})"
+        return f"{self.get_type_demande_display()} — {self.parcelle.reference} ({self.get_motif_display()})"
 
 
 class AdminBoundary(models.Model):

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Foncier — carte</title>
   <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="config.js"></script>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <style>
     html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
@@ -42,22 +43,39 @@
     <div><span style="display:inline-block;width:12px;height:12px;background:#22c55e;border-radius:2px;margin-right:6px"></span>Validée</div>
     <div><span style="display:inline-block;width:12px;height:12px;background:#ef4444;border-radius:2px;margin-right:6px"></span>En litige</div>
   </div>
-  <div id="reportModal" style="display:none;position:fixed;inset:0;z-index:5;background:rgba(0,0,0,.4);align-items:center;justify-content:center">
-    <div style="background:#fff;padding:20px;border-radius:12px;width:320px;max-width:90%;font-family:system-ui">
-      <h3 style="margin:0 0 10px">Signaler la parcelle <span id="report-ref"></span></h3>
-      <label style="font-size:13px;color:#555">Motif</label>
-      <select id="report-motif" style="width:100%;padding:8px;margin:4px 0 10px;border:1px solid #d1d5db;border-radius:6px">
-        <option value="double_vente">Double vente / usurpation</option>
-        <option value="faux_document">Faux document</option>
-        <option value="limites">Limites contestées</option>
-        <option value="autre">Autre</option>
+  <div id="reportModal" style="display:none;position:fixed;inset:0;z-index:5;background:rgba(0,0,0,.45);align-items:center;justify-content:center">
+    <div style="background:#fff;padding:22px;border-radius:12px;width:360px;max-width:92%;font-family:system-ui;max-height:90vh;overflow:auto">
+      <h3 style="margin:0 0 4px;font-size:17px">Nous contacter</h3>
+      <p style="margin:0 0 14px;font-size:12.5px;color:#6b7280">
+        Parcelle <b id="report-ref"></b></p>
+
+      <label style="font-size:13px;color:#555">Objet de votre demande</label>
+      <select id="report-type" onchange="majMotifs()"
+        style="width:100%;padding:8px;margin:4px 0 12px;border:1px solid #d1d5db;border-radius:6px">
+        <option value="info">Demande d'information</option>
+        <option value="signalement">Signaler un problème</option>
       </select>
-      <textarea id="report-comment" placeholder="Précisez (facultatif)"
-        style="width:100%;height:80px;padding:8px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box"></textarea>
+
+      <label style="font-size:13px;color:#555">Motif</label>
+      <select id="report-motif"
+        style="width:100%;padding:8px;margin:4px 0 12px;border:1px solid #d1d5db;border-radius:6px"></select>
+
+      <label style="font-size:13px;color:#555">Votre email <span style="color:#b91c1c">*</span></label>
+      <input id="report-email" type="email" placeholder="pour vous répondre"
+        style="width:100%;padding:8px;margin:4px 0 12px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box" />
+
+      <label style="font-size:13px;color:#555">Téléphone (facultatif)</label>
+      <input id="report-phone" type="tel" placeholder="+228 ..."
+        style="width:100%;padding:8px;margin:4px 0 12px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box" />
+
+      <label style="font-size:13px;color:#555">Votre message <span style="color:#b91c1c">*</span></label>
+      <textarea id="report-comment" placeholder="Expliquez votre demande…"
+        style="width:100%;height:90px;padding:8px;margin:4px 0 4px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box"></textarea>
+
       <div id="report-msg" style="font-size:13px;margin:8px 0"></div>
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button onclick="closeReport()" style="padding:8px 12px;border:0;border-radius:6px;background:#eee;cursor:pointer">Annuler</button>
-        <button onclick="sendReport()" style="padding:8px 12px;border:0;border-radius:6px;background:#ef4444;color:#fff;cursor:pointer">Envoyer</button>
+        <button id="report-send" onclick="sendReport()" style="padding:8px 14px;border:0;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer">Envoyer</button>
       </div>
     </div>
   </div>
@@ -111,7 +129,7 @@
   </div>
 
   <script>
-    const API_ROOT = "http://localhost:8000/api/";
+    const API_ROOT = window.API_ROOT;
     const API = API_ROOT + "parcelles/";
     const AUTH = API_ROOT + "auth/";
 
@@ -134,6 +152,7 @@
       document.getElementById("parcelBox").classList.remove("hidden");
       document.getElementById("userbar").innerHTML =
         `Connecté : <b>${user.username}</b> (${user.role_display})`;
+      window.__userEmail = user.email || "";
       majBandeauEmail(user);
     }
 
@@ -201,7 +220,7 @@
     // Pour un rendu premium, remplacer par MapTiler/Mapbox (avec clé).
     const map = new maplibregl.Map({
       container: "map",
-      style: "https://tiles.openfreemap.org/styles/liberty",
+      style: window.STYLE_PLAN,
       center: [1.2, 6.13], zoom: 16
     });
 
@@ -244,14 +263,8 @@
     map.on("load", addParcelLayers);
 
     // ---- Bascule plan / satellite ----
-    const STYLE_PLAN = "https://tiles.openfreemap.org/styles/liberty";
-    const STYLE_SAT = {
-      version: 8,
-      sources: { sat: { type: "raster",
-        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-        tileSize: 256, attribution: "Imagery © Esri" } },
-      layers: [{ id: "sat", type: "raster", source: "sat" }]
-    };
+    const STYLE_PLAN = window.STYLE_PLAN;
+    const STYLE_SAT = window.STYLE_SAT;
     let vueSatellite = false;
 
     function toggleBasemap() {
@@ -297,8 +310,8 @@
              `<div style="color:#9ca3af;font-size:11px;margin-top:6px;font-style:italic">
                 Identité du propriétaire non publique</div>`}
            <button onclick="openReport(${feature.id}, '${p.reference || ""}')"
-             style="margin-top:10px;width:100%;padding:6px 10px;border:0;border-radius:6px;background:#ef4444;color:#fff;cursor:pointer">
-             Signaler cette parcelle
+             style="margin-top:10px;width:100%;padding:7px 10px;border:0;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer;font-size:13px">
+             Pour plus d'infos, contactez-nous
            </button>
          </div>`;
       new maplibregl.Popup({ maxWidth: "300px" }).setLngLat(lngLat).setHTML(html).addTo(map);
@@ -308,31 +321,67 @@
     map.on("mouseenter", "parcelles-fill", () => { map.getCanvas().style.cursor = "pointer"; });
     map.on("mouseleave", "parcelles-fill", () => { map.getCanvas().style.cursor = ""; });
 
-    // ---- Signalement communautaire ----
+    // ---- Formulaire de contact (info ou signalement) ----
     let reportTarget = null;
+
+    const MOTIFS = {
+      info: [["renseignement", "Renseignement sur la parcelle"],
+             ["achat", "Intérêt d'achat ou de location"],
+             ["autre", "Autre"]],
+      signalement: [["double_vente", "Double vente / usurpation"],
+                    ["faux_document", "Faux document"],
+                    ["limites", "Limites contestées"],
+                    ["autre", "Autre"]]
+    };
+
+    function majMotifs() {
+      const type = document.getElementById("report-type").value;
+      document.getElementById("report-motif").innerHTML =
+        MOTIFS[type].map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+      // Le bouton passe en rouge pour un signalement, bleu pour une demande d'info.
+      const btn = document.getElementById("report-send");
+      btn.style.background = type === "signalement" ? "#ef4444" : "#2563eb";
+      btn.textContent = type === "signalement" ? "Envoyer le signalement" : "Envoyer la demande";
+    }
+
     function openReport(id, ref) {
-      if (!token) { alert("Connecte-toi pour signaler une parcelle."); return; }
       reportTarget = id;
       document.getElementById("report-ref").textContent = ref || ("#" + id);
       document.getElementById("report-comment").value = "";
+      document.getElementById("report-phone").value = "";
       document.getElementById("report-msg").textContent = "";
+      document.getElementById("report-type").value = "info";
+      majMotifs();
+      // Pré-remplit l'email si l'utilisateur est connecté.
+      const email = document.getElementById("report-email");
+      email.value = (window.__userEmail || "");
       document.getElementById("reportModal").style.display = "flex";
     }
+
     function closeReport() { document.getElementById("reportModal").style.display = "none"; }
+
     async function sendReport() {
       if (!reportTarget) return;
-      const motif = document.getElementById("report-motif").value;
-      const comment = document.getElementById("report-comment").value;
       const el = document.getElementById("report-msg");
+      const corps = {
+        type_demande: document.getElementById("report-type").value,
+        motif: document.getElementById("report-motif").value,
+        comment: document.getElementById("report-comment").value.trim(),
+        contact_email: document.getElementById("report-email").value.trim(),
+        contact_phone: document.getElementById("report-phone").value.trim()
+      };
+      if (!corps.contact_email) { el.textContent = "Indique ton email pour qu'on puisse te répondre."; el.style.color = "#b91c1c"; return; }
+      if (!corps.comment) { el.textContent = "Écris ton message."; el.style.color = "#b91c1c"; return; }
+
       el.textContent = "Envoi…"; el.style.color = "#555";
       try {
         const res = await fetch(`${API}${reportTarget}/report/`, {
-          method: "POST", headers: authHeaders(), body: JSON.stringify({ motif, comment })
+          method: "POST", headers: authHeaders(), body: JSON.stringify(corps)
         });
         const d = await res.json();
         if (!res.ok) { el.textContent = d.detail || "Erreur"; el.style.color = "#b91c1c"; return; }
         el.textContent = d.detail; el.style.color = "#15803d";
-        setTimeout(closeReport, 1500);
+        setTimeout(closeReport, 1800);
       } catch (e) { el.textContent = "Erreur réseau"; el.style.color = "#b91c1c"; }
     }
 

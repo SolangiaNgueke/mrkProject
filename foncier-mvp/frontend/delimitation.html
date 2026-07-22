@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Délimitation par coordonnées — Géomètre</title>
   <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="config.js"></script>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <style>
     body { margin: 0; font-family: system-ui, sans-serif; background: #f5f6f8; color: #1f2937; }
@@ -84,7 +85,7 @@
   </div>
 
   <script>
-    const API_ROOT = "http://localhost:8000/api/";
+    const API_ROOT = window.API_ROOT;
     const API = API_ROOT + "parcelles/";
     const token = localStorage.getItem("foncier_token");
 

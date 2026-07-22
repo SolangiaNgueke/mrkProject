@@ -39,8 +39,10 @@
     </div>
   </div>
 
+  <script src="config.js"></script>
   <script>
-    const API = "http://localhost:8000/api/";
+    const API_ROOT = window.API_ROOT;
+    const API = API_ROOT + "parcelles/";
     const token = localStorage.getItem("foncier_token");
 
     const STATUT_COLORS = {
@@ -65,7 +67,7 @@
     async function load() {
       if (!token) { setMsg("Connecte-toi sur la carte pour voir tes parcelles.", true); return; }
       let res;
-      try { res = await fetch(API + "parcelles/mine/", { headers: { "Authorization": "Token " + token } }); }
+      try { res = await fetch(API_ROOT + "parcelles/mine/", { headers: { "Authorization": "Token " + token } }); }
       catch (e) { setMsg("Erreur réseau : " + e, true); return; }
       if (res.status === 401) { setMsg("Session expirée. Reconnecte-toi sur la carte.", true); return; }
       if (!res.ok) { setMsg("Impossible de charger tes parcelles.", true); return; }

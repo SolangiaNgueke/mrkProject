@@ -3,114 +3,91 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tableau de bord — Administration foncière</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <title>Mes parcelles</title>
   <style>
     body { margin: 0; font-family: system-ui, sans-serif; background: #f3f4f6; color: #1f2937; }
     header { background: #1f2d3a; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
     header h1 { font-size: 18px; margin: 0; }
     header a { color: #93c5fd; text-decoration: none; font-size: 14px; }
-    .wrap { max-width: 1000px; margin: 0 auto; padding: 24px 16px 60px; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 26px; }
-    .card { background: #fff; border-radius: 12px; padding: 18px; box-shadow: 0 1px 5px rgba(0,0,0,.07); }
-    .card .n { font-size: 30px; font-weight: 700; }
-    .card .l { font-size: 13px; color: #6b7280; margin-top: 4px; }
-    .card.accent-blue .n { color: #3b82f6; }
-    .card.accent-green .n { color: #22c55e; }
-    .card.accent-red .n { color: #ef4444; }
-    .card.accent-amber .n { color: #f59e0b; }
-    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    .chart-box { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 5px rgba(0,0,0,.07); }
-    .chart-box h2 { font-size: 15px; margin: 0 0 14px; }
-    #msg { padding: 40px; text-align: center; color: #b91c1c; font-size: 15px; }
-    @media (max-width: 720px) { .charts { grid-template-columns: 1fr; } }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 24px 16px 60px; }
+    .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 5px rgba(0,0,0,.07); overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px 14px; text-align: left; font-size: 14px; border-bottom: 1px solid #f0f0f0; }
+    th { color: #6b7280; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+    .ref { font-weight: 600; }
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; color: #fff; }
+    .doc-link { color: #2563eb; text-decoration: none; font-size: 13px; font-weight: 600; }
+    .msg { padding: 40px; text-align: center; color: #6b7280; }
+    .msg.err { color: #b91c1c; }
   </style>
 </head>
 <body>
   <header>
-    <h1>Tableau de bord — Administration foncière</h1>
+    <h1>Mes parcelles</h1>
     <a href="index.html">← Carte publique</a>
   </header>
 
   <div class="wrap">
-    <div id="msg" style="display:none"></div>
-    <div id="content" style="display:none">
-      <div class="cards" id="cards"></div>
-      <div class="charts">
-        <div class="chart-box"><h2>Parcelles par statut</h2><canvas id="pieStatut"></canvas></div>
-        <div class="chart-box"><h2>Dossiers à traiter</h2><canvas id="barTodo"></canvas></div>
-      </div>
+    <div class="card">
+      <div id="msg" class="msg">Chargement…</div>
+      <table id="tbl" style="display:none">
+        <thead>
+          <tr><th>Référence</th><th>Statut</th><th>Fiabilité</th><th>Dimension</th><th>Déclarée le</th><th>Documents</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
     </div>
   </div>
 
+  <script src="config.js"></script>
   <script>
-    const API = "http://localhost:8000/api/";
+    const API_ROOT = window.API_ROOT;
+    const API = API_ROOT + "parcelles/";
     const token = localStorage.getItem("foncier_token");
 
-    const STATUT_LABELS = {
-      draft: "Brouillon", submitted: "Soumises", verifying: "En vérification",
-      validated: "Validées", rejected: "Rejetées", disputed: "En litige"
-    };
     const STATUT_COLORS = {
-      draft: "#d1d5db", submitted: "#f59e0b", verifying: "#3b82f6",
+      draft: "#9ca3af", submitted: "#f59e0b", verifying: "#3b82f6",
       validated: "#22c55e", rejected: "#6b7280", disputed: "#ef4444"
     };
 
-    function showError(txt) {
+    function setMsg(t, err) {
       const m = document.getElementById("msg");
-      m.textContent = txt; m.style.display = "block";
+      m.textContent = t; m.className = "msg" + (err ? " err" : ""); m.style.display = "block";
+    }
+
+    function fmtDate(iso) {
+      try { return new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" }); }
+      catch (e) { return iso; }
+    }
+    function fmtSurface(m2) {
+      if (!m2) return "—";
+      return `${Math.round(m2)} m² (${(m2/10000).toFixed(2)} ha)`;
     }
 
     async function load() {
-      if (!token) { showError("Connecte-toi en administrateur (sur la carte) pour accéder au tableau de bord."); return; }
+      if (!token) { setMsg("Connecte-toi sur la carte pour voir tes parcelles.", true); return; }
       let res;
-      try {
-        res = await fetch(API + "stats/", { headers: { "Authorization": "Token " + token } });
-      } catch (e) { showError("Erreur réseau : " + e); return; }
-      if (res.status === 403) { showError("Accès réservé aux administrateurs."); return; }
-      if (!res.ok) { showError("Impossible de charger les statistiques."); return; }
-      const d = await res.json();
-      render(d);
-    }
+      try { res = await fetch(API_ROOT + "parcelles/mine/", { headers: { "Authorization": "Token " + token } }); }
+      catch (e) { setMsg("Erreur réseau : " + e, true); return; }
+      if (res.status === 401) { setMsg("Session expirée. Reconnecte-toi sur la carte.", true); return; }
+      if (!res.ok) { setMsg("Impossible de charger tes parcelles.", true); return; }
+      const list = await res.json();
+      if (!list.length) { setMsg("Tu n'as encore déclaré aucune parcelle.", false); return; }
 
-    function render(d) {
-      document.getElementById("content").style.display = "block";
+      document.getElementById("rows").innerHTML = list.map(p => {
+        const color = STATUT_COLORS[p.status] || "#999";
+        return `<tr>
+          <td class="ref">${p.reference || ("#" + p.id)}</td>
+          <td><span class="badge" style="background:${color}">${p.status_display}</span></td>
+          <td>${p.reliability_display}</td>
+          <td>${fmtSurface(p.surface_m2)}</td>
+          <td>${fmtDate(p.created_at)}</td>
+          <td><a class="doc-link" href="documents.html?parcelle=${p.id}">Gérer les documents →</a></td>
+        </tr>`;
+      }).join("");
 
-      // --- Cartes de chiffres ---
-      const s = d.par_statut;
-      const cards = [
-        { n: d.parcelles_total, l: "Parcelles au total", cls: "" },
-        { n: s.verifying || 0, l: "En vérification", cls: "accent-blue" },
-        { n: s.validated || 0, l: "Validées", cls: "accent-green" },
-        { n: d.litiges_actifs, l: "Litiges actifs", cls: "accent-red" },
-        { n: d.signalements_a_examiner, l: "Signalements à examiner", cls: "accent-amber" },
-      ];
-      document.getElementById("cards").innerHTML = cards.map(c =>
-        `<div class="card ${c.cls}"><div class="n">${c.n}</div><div class="l">${c.l}</div></div>`).join("");
-
-      // --- Camembert : parcelles par statut (on ignore les statuts à 0) ---
-      const entries = Object.entries(s).filter(([k, v]) => v > 0);
-      new Chart(document.getElementById("pieStatut"), {
-        type: "doughnut",
-        data: {
-          labels: entries.map(([k]) => STATUT_LABELS[k] || k),
-          datasets: [{ data: entries.map(([, v]) => v), backgroundColor: entries.map(([k]) => STATUT_COLORS[k] || "#999") }]
-        },
-        options: { plugins: { legend: { position: "bottom" } } }
-      });
-
-      // --- Barres : dossiers à traiter ---
-      new Chart(document.getElementById("barTodo"), {
-        type: "bar",
-        data: {
-          labels: ["À tracer (géomètre)", "À valider (notaire)", "Litiges actifs", "Signalements"],
-          datasets: [{
-            data: [d.attente_geometre, d.attente_notaire, d.litiges_actifs, d.signalements_a_examiner],
-            backgroundColor: ["#f59e0b", "#3b82f6", "#ef4444", "#8b5cf6"]
-          }]
-        },
-        options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
-      });
+      document.getElementById("msg").style.display = "none";
+      document.getElementById("tbl").style.display = "table";
     }
 
     load();

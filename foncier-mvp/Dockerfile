@@ -20,5 +20,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+RUN chmod +x /app/start-prod.sh
 
+# Développement : serveur Django (rechargement auto).
+# Production   : surcharger la commande par  /app/start-prod.sh  (Gunicorn).
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
