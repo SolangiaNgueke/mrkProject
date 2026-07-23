@@ -16,12 +16,12 @@ window.API_PROD = "https://mylandsure.onrender.com/api/";
 // Clé MapTiler (fonds de carte haute qualité, plan + satellite).
 // Laisser vide -> repli automatique sur OpenFreeMap + Esri (moins net).
 // À restreindre par domaine depuis le tableau de bord MapTiler.
-window.MAPTILER_KEY = "3VtiMKqdlpqOeW5Lnv4u";
+window.MAPTILER_KEY = "COLLE_TA_CLE_ICI";
 
 // --- Styles de carte (calculés à partir de la clé) ---
 (function () {
   const k = window.MAPTILER_KEY;
-  const actif = k && k !== "3VtiMKqdlpqOeW5Lnv4u";
+  const actif = k && k !== "COLLE_TA_CLE_ICI";
 
   // Fond « plan » : rues et bâtiments, style clair à la Zillow.
   window.STYLE_PLAN = actif
@@ -40,3 +40,52 @@ window.MAPTILER_KEY = "3VtiMKqdlpqOeW5Lnv4u";
         layers: [{ id: "sat", type: "raster", source: "sat" }]
       };
 })();
+
+// ------------------------------------------------------------------
+//  Anti double-clic
+// ------------------------------------------------------------------
+// Empêche les clics répétés inutiles : le bouton se verrouille pendant
+// l'action, puis reste inactif un court instant (délai de garde).
+// Évite notamment de créer deux fois la même parcelle.
+
+window.DELAI_GARDE_MS = 1500;   // pause après une action terminée
+window.DELAI_CLIC_CARTE_MS = 500;  // pause entre deux clics sur la carte
+
+window.actionProtegee = async function (bouton, action, delaiGarde) {
+  if (!bouton || bouton.dataset.enCours === "1") return;
+  const garde = delaiGarde || window.DELAI_GARDE_MS;
+
+  bouton.dataset.enCours = "1";
+  const texteInitial = bouton.textContent;
+  const largeur = bouton.offsetWidth;      // évite que le bouton rétrécisse
+  bouton.style.minWidth = largeur + "px";
+  bouton.disabled = true;
+  bouton.style.opacity = "0.6";
+  bouton.style.cursor = "progress";
+  bouton.textContent = "Veuillez patienter…";
+
+  try {
+    await action();
+  } finally {
+    setTimeout(function () {
+      bouton.disabled = false;
+      bouton.style.opacity = "";
+      bouton.style.cursor = "";
+      bouton.style.minWidth = "";
+      bouton.textContent = texteInitial;
+      delete bouton.dataset.enCours;
+    }, garde);
+  }
+};
+
+// Limite la fréquence d'une action déclenchée par des clics rapprochés
+// (utilisée pour le placement du point sur la carte).
+window.limiterFrequence = function (fn, delai) {
+  let dernier = 0;
+  return function () {
+    const maintenant = Date.now();
+    if (maintenant - dernier < (delai || window.DELAI_CLIC_CARTE_MS)) return;
+    dernier = maintenant;
+    return fn.apply(this, arguments);
+  };
+};

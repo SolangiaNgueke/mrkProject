@@ -65,14 +65,14 @@
     }
 
     async function load() {
-      if (!token) { setMsg("Connecte-toi sur la carte pour voir tes parcelles.", true); return; }
+      if (!token) { setMsg("Connectez-vous sur la carte pour voir vos parcelles.", true); return; }
       let res;
       try { res = await fetch(API_ROOT + "parcelles/mine/", { headers: { "Authorization": "Token " + token } }); }
       catch (e) { setMsg("Erreur réseau : " + e, true); return; }
-      if (res.status === 401) { setMsg("Session expirée. Reconnecte-toi sur la carte.", true); return; }
-      if (!res.ok) { setMsg("Impossible de charger tes parcelles.", true); return; }
+      if (res.status === 401) { setMsg("Session expirée. Reconnectez-vous sur la carte.", true); return; }
+      if (!res.ok) { setMsg("Impossible de charger vos parcelles.", true); return; }
       const list = await res.json();
-      if (!list.length) { setMsg("Tu n'as encore déclaré aucune parcelle.", false); return; }
+      if (!list.length) { setMsg("Vous n'avez encore déclaré aucune parcelle.", false); return; }
 
       document.getElementById("rows").innerHTML = list.map(p => {
         const color = STATUT_COLORS[p.status] || "#999";

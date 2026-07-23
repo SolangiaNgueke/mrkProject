@@ -84,7 +84,7 @@ class VerifyEmailView(View):
             user_id = lire_jeton(token)
         except SignatureExpired:
             return _page("Lien expiré", "Ce lien de confirmation a plus de 48 heures. "
-                         "Demande un nouvel envoi depuis la carte.", "#b45309")
+                         "Demandez un nouvel envoi depuis la carte.", "#b45309")
         except (BadSignature, ValueError):
             return _page("Lien invalide", "Ce lien de confirmation n'est pas valide.", "#b91c1c")
 
@@ -97,8 +97,8 @@ class VerifyEmailView(View):
         if not user.email_verified:
             user.email_verified = True
             user.save(update_fields=["email_verified"])
-        return _page("Adresse confirmée", "Merci ! Ton adresse email est vérifiée : "
-                     "tu recevras désormais les notifications de suivi.", "#15803d")
+        return _page("Adresse confirmée", "Merci ! Votre adresse email est vérifiée : "
+                     "vous recevrez désormais les notifications de suivi.", "#15803d")
 
 
 class ResendVerificationView(APIView):
@@ -114,6 +114,6 @@ class ResendVerificationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if user.email_verified:
-            return Response({"detail": "Ton adresse est déjà vérifiée."})
+            return Response({"detail": "Votre adresse est déjà vérifiée."})
         envoyer_verification(user)
         return Response({"detail": f"Lien de confirmation renvoyé à {user.email}."})

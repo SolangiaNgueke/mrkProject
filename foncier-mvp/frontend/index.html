@@ -75,7 +75,7 @@
       <div id="report-msg" style="font-size:13px;margin:8px 0"></div>
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button onclick="closeReport()" style="padding:8px 12px;border:0;border-radius:6px;background:#eee;cursor:pointer">Annuler</button>
-        <button id="report-send" onclick="sendReport()" style="padding:8px 14px;border:0;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer">Envoyer</button>
+        <button id="report-send" onclick="actionProtegee(this, sendReport)" style="padding:8px 14px;border:0;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer">Envoyer</button>
       </div>
     </div>
   </div>
@@ -88,10 +88,10 @@
       <input id="login-email" type="email" placeholder="Email (pour être notifié)" />
       <input id="login-password" type="password" placeholder="Mot de passe" />
       <div style="display:flex; gap:8px;">
-        <button class="btn-primary" onclick="login()">Se connecter</button>
-        <button class="btn-ghost" onclick="register()">Créer un compte</button>
+        <button class="btn-primary" onclick="actionProtegee(this, login)">Se connecter</button>
+        <button class="btn-ghost" onclick="actionProtegee(this, register)">Créer un compte</button>
       </div>
-      <p class="hint">Crée un compte (citoyen) ou connecte-toi. L'email sert à recevoir
+      <p class="hint">Créez un compte (citoyen) ou connectez-vous. L'email sert à recevoir
         les notifications de suivi (facultatif pour se connecter).</p>
     </div>
 
@@ -102,21 +102,21 @@
            color:#92400e;padding:8px 10px;border-radius:7px;font-size:12.5px;
            line-height:1.45;margin:8px 0"></div>
       <h2>Déclarer une parcelle</h2>
-      <p class="hint">1) Indique la localisation : clique sur la carte ou « Ma position ».<br>
-         2) Enregistre, puis ajoute tes documents.<br>
+      <p class="hint">1) Indiquez la localisation : cliquez sur la carte ou « Ma position ».<br>
+         2) Enregistrez, puis ajoutez vos documents.<br>
          <i>Une référence officielle est attribuée automatiquement.
          Le tracé du terrain sera réalisé par un géomètre.</i></p>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="btn-ghost" onclick="useMyLocation()">📍 Ma position</button>
+        <button class="btn-ghost" onclick="actionProtegee(this, useMyLocation)">📍 Ma position</button>
         <button class="btn-ghost" onclick="clearMarker()">Effacer le point</button>
-        <button class="btn-primary" onclick="saveParcelle()">Enregistrer</button>
+        <button class="btn-primary" onclick="actionProtegee(this, saveParcelle)">Enregistrer</button>
       </div>
 
       <!-- Documents (après enregistrement) -->
       <div id="docsBox" class="hidden">
         <div class="sep"></div>
         <h2>Parcelle #<span id="docs-parcel-id"></span> enregistrée</h2>
-        <p class="hint">Ajoute maintenant tes pièces justificatives (titre, acte, plan…).</p>
+        <p class="hint">Ajoutez maintenant vos pièces justificatives (titre, acte, plan…).</p>
         <button class="btn-primary" onclick="openDocsPage()">Ajouter les documents ↗</button>
       </div>
 
@@ -163,7 +163,7 @@
       if (!user || user.email_verified || !user.email) { b.style.display = "none"; return; }
       b.style.display = "block";
       b.innerHTML =
-        `⚠️ Adresse email non confirmée — tu ne recevras pas les notifications de suivi.
+        `⚠️ Adresse email non confirmée — vous ne recevrez pas les notifications de suivi.
          <a href="#" onclick="renvoyerVerification();return false;"
             style="color:#1d4ed8;font-weight:600">Renvoyer le lien</a>`;
     }
@@ -190,7 +190,7 @@
         const d = await res.json();
         if (!res.ok) { setMsg("Inscription refusée : " + JSON.stringify(d), "warn"); return; }
         token = d.token; localStorage.setItem("foncier_token", token);
-        showLoggedIn(d.user); setMsg("Compte créé. Tu es connecté.", "ok");
+        showLoggedIn(d.user); setMsg("Compte créé. Vous êtes connecté.", "ok");
       } catch (e) { setMsg("Erreur réseau : " + e, "warn"); }
     }
     async function login() {
@@ -238,9 +238,9 @@
     }
     function useMyLocation() {
       if (!navigator.geolocation) { setMsg("Géolocalisation non disponible sur cet appareil.", "warn"); return; }
-      setMsg("Recherche de ta position…", "");
+      setMsg("Recherche de votre position…", "");
       navigator.geolocation.getCurrentPosition(
-        (pos) => { const { longitude, latitude } = pos.coords; setMarker(longitude, latitude); map.flyTo({ center: [longitude, latitude], zoom: 17 }); setMsg("Position récupérée. Tu peux ajuster le point en le déplaçant.", "ok"); },
+        (pos) => { const { longitude, latitude } = pos.coords; setMarker(longitude, latitude); map.flyTo({ center: [longitude, latitude], zoom: 17 }); setMsg("Position récupérée. Vous pouvez ajuster le point en le déplaçant.", "ok"); },
         (err) => { setMsg("Position indisponible : " + err.message, "warn"); }
       );
     }
@@ -370,8 +370,8 @@
         contact_email: document.getElementById("report-email").value.trim(),
         contact_phone: document.getElementById("report-phone").value.trim()
       };
-      if (!corps.contact_email) { el.textContent = "Indique ton email pour qu'on puisse te répondre."; el.style.color = "#b91c1c"; return; }
-      if (!corps.comment) { el.textContent = "Écris ton message."; el.style.color = "#b91c1c"; return; }
+      if (!corps.contact_email) { el.textContent = "Indiquez votre email pour que nous puissions vous répondre."; el.style.color = "#b91c1c"; return; }
+      if (!corps.comment) { el.textContent = "Écrivez votre message."; el.style.color = "#b91c1c"; return; }
 
       el.textContent = "Envoi…"; el.style.color = "#555";
       try {
@@ -385,12 +385,18 @@
       } catch (e) { el.textContent = "Erreur réseau"; el.style.color = "#b91c1c"; }
     }
 
-    // Clic : si on touche une parcelle -> infos publiques ; sinon -> poser un point
+    // Clic : si on touche une parcelle -> infos publiques ; sinon -> poser un point.
+    // Un délai minimal sépare deux placements pour éviter les clics inutiles.
+    const poserPoint = limiterFrequence(function (lngLat) {
+      setMarker(lngLat.lng, lngLat.lat);
+      setMsg("Point placé. Vous pouvez le déplacer, puis enregistrer.", "ok");
+    });
+
     map.on("click", (e) => {
       const hits = map.queryRenderedFeatures(e.point, { layers: ["parcelles-fill"] });
       if (hits.length) { showParcelInfo(hits[0], e.lngLat); return; }
       if (document.getElementById("parcelBox").classList.contains("hidden")) return; // pas connecté
-      setMarker(e.lngLat.lng, e.lngLat.lat);
+      poserPoint(e.lngLat);
     });
 
     async function loadParcelles() {
@@ -403,16 +409,18 @@
 
     async function saveParcelle() {
       const point = currentPoint();
-      if (!point) { setMsg("Indique d'abord ta localisation (clic sur la carte ou « Ma position »).", "warn"); return; }
+      if (!point) { setMsg("Indiquez d'abord votre localisation (clic sur la carte ou « Ma position »).", "warn"); return; }
       const feature = { type: "Feature", geometry: point, properties: {} };
       try {
         const res = await fetch(API, { method: "POST", headers: authHeaders(), body: JSON.stringify(feature) });
-        if (res.status === 401) { setMsg("Connecte-toi pour enregistrer.", "warn"); return; }
+        if (res.status === 401) { setMsg("Connectez-vous pour enregistrer.", "warn"); return; }
         const d = await res.json();
         if (!res.ok) { setMsg("Erreur : " + JSON.stringify(d), "warn"); return; }
         lastParcelId = d.id;
         const ref = (d.properties && d.properties.reference) ? d.properties.reference : ("#" + d.id);
-        let txt = `Localisation enregistrée. Référence : ${ref}.`;
+        let txt = d.doublon_evite
+          ? `Cette localisation venait d'être enregistrée. Référence : ${ref}.`
+          : `Localisation enregistrée. Référence : ${ref}.`;
         if (d.already_registered_zone) txt += "\n⚠️ Cette zone fait déjà l'objet d'une parcelle enregistrée.";
         setMsg(txt, d.already_registered_zone ? "warn" : "ok");
         showDocsPanel();

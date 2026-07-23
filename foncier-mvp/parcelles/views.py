@@ -2,6 +2,7 @@ import hashlib
 import json
 
 from django.contrib.gis.geos import GEOSGeometry
+from django.contrib.gis.measure import D
 from django.db.models import Count
 from django.http import FileResponse, Http404
 from rest_framework import status, viewsets
@@ -12,6 +13,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .geo import polygon_from_points, suggest_utm_epsg, utm_zone_label
+
+# Anti-doublon à la déclaration : une nouvelle soumission du même utilisateur,
+# au même endroit et dans ce court laps de temps, est considérée comme un
+# double envoi (double-clic ou requête relancée) et non comme une 2e parcelle.
+DELAI_ANTI_DOUBLON = 60          # secondes
+DISTANCE_ANTI_DOUBLON_M = 25     # mètres
 from .models import Conflit, Delimitation, Document, Parcelle, Signalement
 from .permissions import IsOwnerOrStaffOrReadOnly
 from .serializers import (
@@ -107,6 +114,32 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         (statut « soumise ») jusqu'à validation."""
         serializer = ParcelleSubmitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        # Anti-doublon : un envoi répété (double-clic, requête relancée après une
+        # coupure réseau) ne doit pas créer deux fois la même parcelle. On renvoie
+        # celle qui vient d'être déclarée au même endroit par le même utilisateur.
+        point = serializer.validated_data.get("declared_location")
+        if point:
+            from datetime import timedelta
+
+            from django.utils import timezone
+
+            recente = (
+                Parcelle.objects.filter(
+                    owner=request.user,
+                    status=Parcelle.Status.SUBMITTED,
+                    created_at__gte=timezone.now() - timedelta(seconds=DELAI_ANTI_DOUBLON),
+                    declared_location__distance_lte=(point, D(m=DISTANCE_ANTI_DOUBLON_M)),
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if recente:
+                data = ParcelleSubmitSerializer(recente).data
+                data["already_registered_zone"] = False
+                data["doublon_evite"] = True
+                return Response(data, status=status.HTTP_200_OK)
+
         parcelle = serializer.save(
             owner=request.user, status=Parcelle.Status.SUBMITTED
         )
@@ -507,7 +540,7 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         if not user:
             if not email:
                 return Response(
-                    {"detail": "Indique une adresse email pour que nous puissions te répondre."},
+                    {"detail": "Indiquez une adresse email pour que nous puissions vous répondre."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
         elif not email:
@@ -515,7 +548,7 @@ class ParcelleViewSet(viewsets.ModelViewSet):
 
         if not comment:
             return Response(
-                {"detail": "Précise le motif de ta demande dans le message."},
+                {"detail": "Précisez le motif de votre demande dans le message."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -541,7 +574,7 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         message = (
             "Signalement enregistré. Un administrateur va l'examiner."
             if type_demande == Signalement.Type.SIGNALEMENT
-            else "Demande envoyée. Nous te répondrons à l'adresse indiquée."
+            else "Demande envoyée. Nous vous répondrons à l'adresse indiquée."
         )
         return Response({"detail": message}, status=status.HTTP_201_CREATED)
 

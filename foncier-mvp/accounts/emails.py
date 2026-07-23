@@ -36,12 +36,12 @@ def envoyer_verification(user):
     if not user.email or user.email_verified:
         return
     lien = f"{_base_api()}/api/auth/verify-email/?token={creer_jeton(user)}"
-    sujet = "[Foncier] Confirme ton adresse email"
+    sujet = "[Foncier] Confirmez votre adresse email"
     corps = (
         f"Bonjour {user.username},\n\n"
-        f"Confirme ton adresse email en ouvrant ce lien :\n{lien}\n\n"
+        f"Confirmez votre adresse email en ouvrant ce lien :\n{lien}\n\n"
         f"Ce lien est valable 48 heures.\n"
-        f"Si tu n'es pas à l'origine de cette inscription, ignore ce message.\n\n"
+        f"Si vous n'êtes pas à l'origine de cette inscription, ignorez ce message.\n\n"
         f"— Plateforme foncière"
     )
     send_mail(sujet, corps, settings.DEFAULT_FROM_EMAIL, [user.email], fail_silently=True)

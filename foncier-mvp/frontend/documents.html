@@ -38,13 +38,13 @@
     <div class="card">
       <h1>Documents — parcelle #<span id="pid">?</span></h1>
       <p class="hint">Pièces confidentielles (titre, acte, plan…). Visibles uniquement
-        par toi (le propriétaire) et les vérificateurs. Jamais publiques.</p>
+        par vous (le propriétaire) et les vérificateurs. Jamais publiques.</p>
     </div>
 
     <div class="card" id="formCard">
       <h2>Ajouter des documents</h2>
-      <p class="hint">Pour chaque type, tu peux joindre jusqu'à <b>2 fichiers</b>.
-        Renseigne ceux que tu as, puis clique une seule fois sur « Ajouter les documents ».</p>
+      <p class="hint">Pour chaque type, vous pouvez joindre jusqu'à <b>2 fichiers</b>.
+        Renseignez ceux que vous avez, puis cliquez une seule fois sur « Ajouter les documents ».</p>
       <table class="doc-form">
         <tbody>
           <tr><td class="t-label">Titre foncier</td><td><input type="file" data-type="title" multiple></td></tr>
@@ -54,7 +54,7 @@
           <tr><td class="t-label">Autre</td><td><input type="file" data-type="other" multiple></td></tr>
         </tbody>
       </table>
-      <button class="btn-primary" onclick="uploadDocuments()">Ajouter les documents</button>
+      <button class="btn-primary" onclick="actionProtegee(this, uploadDocuments)">Ajouter les documents</button>
       <div id="msg"></div>
     </div>
 
@@ -87,7 +87,7 @@
     }
     if (!token) {
       document.getElementById("formCard").innerHTML =
-        "<p class='warn'>Tu n'es pas connecté. Retourne à la carte pour te connecter.</p>";
+        "<p class='warn'>Vous n'êtes pas connecté. Retournez à la carte pour vous connecter.</p>";
     } else if (!parcelId) {
       setMsg("Aucune parcelle indiquée dans l'adresse.", "warn");
     }
@@ -107,7 +107,7 @@
         }
         files.forEach(f => jobs.push({ type: inp.dataset.type, file: f }));
       }
-      if (jobs.length === 0) { setMsg("Choisis au moins un fichier.", "warn"); return; }
+      if (jobs.length === 0) { setMsg("Choisissez au moins un fichier.", "warn"); return; }
 
       setMsg(`Envoi de ${jobs.length} fichier(s)…`, "hint");
       let ok = 0;
