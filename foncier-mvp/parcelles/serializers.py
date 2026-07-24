@@ -123,3 +123,37 @@ class ParcelleMineSerializer(serializers.ModelSerializer):
             "id", "reference", "status", "status_display",
             "reliability", "reliability_display", "surface_m2", "created_at",
         ]
+
+
+class ParcelleFileAttenteSerializer(serializers.ModelSerializer):
+    """File de travail du géomètre : parcelles à tracer ou déjà tracées par lui."""
+
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    a_un_plan = serializers.SerializerMethodField()
+    nb_documents = serializers.SerializerMethodField()
+    localisation = serializers.SerializerMethodField()
+    deja_trace = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Parcelle
+        fields = [
+            "id", "reference", "status", "status_display",
+            "a_un_plan", "nb_documents", "localisation", "deja_trace",
+            "surface_m2", "created_at",
+        ]
+
+    def get_a_un_plan(self, obj):
+        """Un plan de bornage a-t-il été déposé ? (seul type visible du géomètre)"""
+        return obj.documents.filter(doc_type=Document.DocType.PLAN).exists()
+
+    def get_nb_documents(self, obj):
+        return obj.documents.count()
+
+    def get_localisation(self, obj):
+        pt = obj.declared_location
+        if not pt:
+            return None
+        return {"lon": round(pt.x, 6), "lat": round(pt.y, 6)}
+
+    def get_deja_trace(self, obj):
+        return hasattr(obj, "delimitation")

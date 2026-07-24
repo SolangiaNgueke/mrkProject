@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Espace géomètre</title>
+  <script src="config.js"></script>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f3f4f6; color: #1f2937; }
+    header { background: #1f2d3a; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+    header h1 { font-size: 18px; margin: 0; }
+    header a { color: #93c5fd; text-decoration: none; font-size: 14px; }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 24px 16px 60px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 22px; }
+    .card { background: #fff; border-radius: 12px; padding: 16px 18px; box-shadow: 0 1px 5px rgba(0,0,0,.07); }
+    .card .n { font-size: 28px; font-weight: 700; }
+    .card .l { font-size: 13px; color: #6b7280; margin-top: 3px; }
+    .blue .n { color: #3b82f6; } .amber .n { color: #f59e0b; }
+    .panel { background: #fff; border-radius: 12px; box-shadow: 0 1px 5px rgba(0,0,0,.07); overflow: hidden; }
+    .filtres { padding: 12px 16px; border-bottom: 1px solid #f0f0f0; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .filtres button { padding: 6px 12px; border: 1px solid #d1d5db; background: #fff; border-radius: 999px; font-size: 13px; cursor: pointer; }
+    .filtres button.actif { background: #1f2d3a; color: #fff; border-color: #1f2d3a; }
+    .filtres input { padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; flex: 1; min-width: 140px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px 14px; text-align: left; font-size: 14px; border-bottom: 1px solid #f0f0f0; }
+    th { color: #6b7280; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+    .ref { font-weight: 600; }
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; color: #fff; white-space: nowrap; }
+    .oui { color: #15803d; font-weight: 600; } .non { color: #9ca3af; }
+    .btn-tracer { display: inline-block; padding: 7px 14px; border-radius: 7px; background: #2563eb;
+                  color: #fff; text-decoration: none; font-size: 13px; font-weight: 600; white-space: nowrap; }
+    .btn-tracer.corriger { background: #6b7280; }
+    .msg { padding: 40px; text-align: center; color: #6b7280; }
+    .msg.err { color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Espace géomètre — parcelles à tracer</h1>
+    <div><a href="index.html">← Carte publique</a></div>
+  </header>
+
+  <div class="wrap">
+    <div id="msg" class="msg">Chargement…</div>
+
+    <div id="contenu" style="display:none">
+      <div class="cards">
+        <div class="card amber"><div class="n" id="n-atracer">0</div><div class="l">En attente de tracé</div></div>
+        <div class="card blue"><div class="n" id="n-verif">0</div><div class="l">Tracées, en vérification</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="filtres">
+          <button id="f-tous" class="actif" onclick="filtrer('tous')">Toutes</button>
+          <button id="f-atracer" onclick="filtrer('atracer')">À tracer</button>
+          <button id="f-plan" onclick="filtrer('plan')">Avec plan fourni</button>
+          <input id="recherche" type="search" placeholder="Rechercher une référence…" oninput="afficher()" />
+        </div>
+        <table>
+          <thead>
+            <tr><th>Référence</th><th>Statut</th><th>Plan fourni</th><th>Déclarée le</th><th>Localisation</th><th></th></tr>
+          </thead>
+          <tbody id="lignes"></tbody>
+        </table>
+        <div id="vide" class="msg" style="display:none">Aucune parcelle ne correspond.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = window.API_ROOT + "parcelles/";
+    const token = localStorage.getItem("foncier_token");
+    let parcelles = [];
+    let filtreActif = "tous";
+
+    const COULEURS = { submitted: "#f59e0b", verifying: "#3b82f6" };
+
+    function setMsg(t, err) {
+      const m = document.getElementById("msg");
+      m.textContent = t; m.className = "msg" + (err ? " err" : ""); m.style.display = "block";
+    }
+    function dateFr(iso) {
+      try { return new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" }); }
+      catch (e) { return "—"; }
+    }
+
+    async function charger() {
+      if (!token) { setMsg("Connectez-vous en géomètre sur la carte, puis revenez sur cette page.", true); return; }
+      let res;
+      try { res = await fetch(API + "a_tracer/", { headers: { "Authorization": "Token " + token } }); }
+      catch (e) { setMsg("Erreur réseau : " + e, true); return; }
+      if (res.status === 403) { setMsg("Accès réservé au géomètre.", true); return; }
+      if (res.status === 401) { setMsg("Session expirée. Reconnectez-vous sur la carte.", true); return; }
+      if (!res.ok) { setMsg("Impossible de charger la liste.", true); return; }
+
+      const d = await res.json();
+      parcelles = d.parcelles || [];
+      document.getElementById("n-atracer").textContent = d.a_tracer;
+      document.getElementById("n-verif").textContent = d.en_verification;
+      document.getElementById("msg").style.display = "none";
+      document.getElementById("contenu").style.display = "block";
+      afficher();
+    }
+
+    function filtrer(f) {
+      filtreActif = f;
+      ["tous", "atracer", "plan"].forEach(k =>
+        document.getElementById("f-" + k).classList.toggle("actif", k === f));
+      afficher();
+    }
+
+    function afficher() {
+      const q = document.getElementById("recherche").value.trim().toLowerCase();
+      const liste = parcelles.filter(p => {
+        if (filtreActif === "atracer" && p.deja_trace) return false;
+        if (filtreActif === "plan" && !p.a_un_plan) return false;
+        if (q && !(p.reference || "").toLowerCase().includes(q)) return false;
+        return true;
+      });
+
+      document.getElementById("lignes").innerHTML = liste.map(p => {
+        const loc = p.localisation
+          ? `<a href="https://www.google.com/maps?q=${p.localisation.lat},${p.localisation.lon}"
+                target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none">
+               ${p.localisation.lat.toFixed(4)}, ${p.localisation.lon.toFixed(4)}</a>`
+          : "—";
+        const plan = p.a_un_plan
+          ? '<span class="oui">Oui</span>'
+          : `<span class="non">Non</span>`;
+        const libelle = p.deja_trace ? "Corriger le tracé" : "Tracer";
+        const classe = p.deja_trace ? "btn-tracer corriger" : "btn-tracer";
+        return `<tr>
+          <td class="ref">${p.reference || ("#" + p.id)}</td>
+          <td><span class="badge" style="background:${COULEURS[p.status] || "#9ca3af"}">${p.status_display}</span></td>
+          <td>${plan}</td>
+          <td>${dateFr(p.created_at)}</td>
+          <td>${loc}</td>
+          <td><a class="${classe}" href="delimitation.html?parcelle=${p.id}">${libelle} →</a></td>
+        </tr>`;
+      }).join("");
+
+      document.getElementById("vide").style.display = liste.length ? "none" : "block";
+    }
+
+    charger();
+  </script>
+</body>
+</html>

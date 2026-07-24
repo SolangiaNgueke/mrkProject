@@ -104,7 +104,8 @@
       <h2>Déclarer une parcelle</h2>
       <p class="hint">1) Indiquez la localisation : cliquez sur la carte ou « Ma position ».<br>
          2) Enregistrez, puis ajoutez vos documents.<br>
-         <i>Le tracé du terrain sera réalisé par un géomètre.</i></p>
+         <i>Une référence officielle est attribuée automatiquement.
+         Le tracé du terrain sera réalisé par un géomètre.</i></p>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn-ghost" onclick="actionProtegee(this, useMyLocation)">📍 Ma position</button>
         <button class="btn-ghost" onclick="clearMarker()">Effacer le point</button>
@@ -121,6 +122,8 @@
 
       <div class="sep"></div>
       <a href="mes-parcelles.html" style="display:inline-block;font-size:13px;color:#2563eb;text-decoration:none;margin-bottom:8px">📋 Mes parcelles</a>
+      <a id="lien-geometre" href="geometre.html" style="display:none;font-size:13px;color:#2563eb;text-decoration:none;margin-bottom:8px">📐 Espace géomètre</a>
+      <a id="lien-dashboard" href="dashboard.html" style="display:none;font-size:13px;color:#2563eb;text-decoration:none;margin-bottom:8px">📊 Tableau de bord</a>
       <button class="btn-ghost" onclick="logout()">Se déconnecter</button>
     </div>
 
@@ -152,6 +155,11 @@
       document.getElementById("userbar").innerHTML =
         `Connecté : <b>${user.username}</b> (${user.role_display})`;
       window.__userEmail = user.email || "";
+      // Liens réservés à certains rôles.
+      const geo = ["SURVEYOR", "ADMIN"].includes((user.role || "").toUpperCase()) || user.is_superuser;
+      const adm = ["ADMIN"].includes((user.role || "").toUpperCase()) || user.is_superuser;
+      document.getElementById("lien-geometre").style.display = geo ? "inline-block" : "none";
+      document.getElementById("lien-dashboard").style.display = adm ? "inline-block" : "none";
       majBandeauEmail(user);
     }
 

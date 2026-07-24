@@ -23,6 +23,7 @@ from .models import Conflit, Delimitation, Document, Parcelle, Signalement
 from .permissions import IsOwnerOrStaffOrReadOnly
 from .serializers import (
     DocumentSerializer,
+    ParcelleFileAttenteSerializer,
     OverlapSerializer,
     ParcelleMineSerializer,
     ParcellePublicSerializer,
@@ -493,6 +494,38 @@ class ParcelleViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         return Response({"count": len(points), "points": points})
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="a_tracer",
+        permission_classes=[IsAuthenticated],
+    )
+    def a_tracer(self, request):
+        """File de travail du GÉOMÈTRE.
+
+        Renvoie les parcelles déclarées en attente de tracé, ainsi que celles
+        qu'il a déjà tracées (pour pouvoir les corriger tant que le notaire
+        n'a pas validé). Évite de saisir un numéro de parcelle à la main.
+        """
+        if not self._is_surveyor(request.user):
+            return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
+
+        qs = (
+            Parcelle.objects.filter(
+                status__in=[Parcelle.Status.SUBMITTED, Parcelle.Status.VERIFYING]
+            )
+            .exclude(declared_location=None)
+            .select_related("delimitation")
+            .prefetch_related("documents")
+            .order_by("status", "created_at")   # « soumises » d'abord, plus anciennes en tête
+        )
+        data = ParcelleFileAttenteSerializer(qs, many=True).data
+        return Response({
+            "a_tracer": sum(1 for p in data if not p["deja_trace"]),
+            "en_verification": sum(1 for p in data if p["deja_trace"]),
+            "parcelles": data,
+        })
 
     @action(
         detail=False,

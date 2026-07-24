@@ -13,11 +13,11 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "username", "email", "role", "role_display",
-            "phone", "kyc_verified", "email_verified",
+            "phone", "kyc_verified", "email_verified", "is_superuser",
         ]
         # Le rôle et le KYC ne sont PAS modifiables par l'utilisateur lui-même :
         # ils sont attribués par un administrateur dans le back-office.
-        read_only_fields = ["role", "kyc_verified", "email_verified"]
+        read_only_fields = ["role", "kyc_verified", "email_verified", "is_superuser"]
 
 
 class RegisterSerializer(serializers.ModelSerializer):
