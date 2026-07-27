@@ -32,6 +32,29 @@
     .btn-tracer.corriger { background: #6b7280; }
     .msg { padding: 40px; text-align: center; color: #6b7280; }
     .msg.err { color: #b91c1c; }
+
+    /* ---------------- Mobile : lignes en cartes, filtres empilés ---------------- */
+    @media (max-width: 640px) {
+      header { padding: 14px 16px; } header h1 { font-size: 15px; }
+      .wrap { padding: 16px 10px 40px; }
+      .filtres { flex-direction: column; align-items: stretch; }
+      .filtres input { min-width: 0; }
+      .panel { background: transparent; box-shadow: none; }
+      table, tbody, tr, td { display: block; width: 100%; box-sizing: border-box; }
+      thead { display: none; }
+      tr { background: #fff; border-radius: 12px; box-shadow: 0 1px 5px rgba(0,0,0,.07);
+           margin-bottom: 12px; padding: 4px 4px; }
+      td { border: 0; padding: 10px 16px; display: grid; grid-template-columns: 40% 1fr;
+           column-gap: 14px; align-items: center; text-align: right; }
+      td::before { content: attr(data-label); color: #6b7280; font-size: 12px;
+                   font-weight: 600; text-transform: uppercase; letter-spacing: .03em; text-align: left; }
+      td.ref { font-size: 16px; font-weight: 700; }
+      .btn-tracer { width: 100%; text-align: center; padding: 12px; }
+      /* la dernière cellule (bouton) occupe toute la largeur, sans étiquette */
+      td.action { display: block; }
+      td.action::before { content: ""; display: none; }
+      .filtres { margin-bottom: 4px; }
+    }
   </style>
 </head>
 <body>
@@ -130,12 +153,12 @@
         const libelle = p.deja_trace ? "Corriger le tracé" : "Tracer";
         const classe = p.deja_trace ? "btn-tracer corriger" : "btn-tracer";
         return `<tr>
-          <td class="ref">${p.reference || ("#" + p.id)}</td>
-          <td><span class="badge" style="background:${COULEURS[p.status] || "#9ca3af"}">${p.status_display}</span></td>
-          <td>${plan}</td>
-          <td>${dateFr(p.created_at)}</td>
-          <td>${loc}</td>
-          <td><a class="${classe}" href="delimitation.html?parcelle=${p.id}">${libelle} →</a></td>
+          <td class="ref" data-label="Référence">${p.reference || ("#" + p.id)}</td>
+          <td data-label="Statut"><span class="badge" style="background:${COULEURS[p.status] || "#9ca3af"}">${p.status_display}</span></td>
+          <td data-label="Plan fourni">${plan}</td>
+          <td data-label="Déclarée le">${dateFr(p.created_at)}</td>
+          <td data-label="Localisation">${loc}</td>
+          <td class="action"><a class="${classe}" href="delimitation.html?parcelle=${p.id}">${libelle} →</a></td>
         </tr>`;
       }).join("");
 
