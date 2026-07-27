@@ -9,13 +9,49 @@
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <style>
     html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
-    #map { position: absolute; inset: 0; }
-    #panel {
-      position: absolute; top: 12px; left: 12px; z-index: 1;
-      background: #fff; padding: 14px 16px; border-radius: 10px;
-      box-shadow: 0 2px 12px rgba(0,0,0,.2); width: 290px;
+    #map { position: absolute; inset: 0 0 62px 0; }   /* laisse la place à la barre du bas */
+
+    /* ---------------- Barre d'icônes du bas (mobile + ordinateur) ---------------- */
+    #navbar {
+      position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; height: 62px;
+      background: #fff; border-top: 1px solid #e5e7eb; display: flex;
+      box-shadow: 0 -2px 12px rgba(0,0,0,.08);
     }
-    #panel h2 { margin: 0 0 8px; font-size: 15px; }
+    #navbar button {
+      flex: 1; background: none; border: 0; cursor: pointer; padding: 6px 4px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 3px; color: #6b7280; font-size: 11px; line-height: 1;
+    }
+    #navbar button .ic { font-size: 21px; line-height: 1; }
+    #navbar button.actif { color: #2563eb; }
+    #navbar button:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* ---------------- Feuilles ouvertes par les icônes ---------------- */
+    .sheet {
+      position: absolute; left: 0; right: 0; bottom: 62px; z-index: 3;
+      background: #fff; box-shadow: 0 -3px 16px rgba(0,0,0,.16);
+      border-radius: 16px 16px 0 0; padding: 16px 18px 20px;
+      max-height: 68vh; overflow-y: auto;
+      transform: translateY(110%); transition: transform .22s ease; visibility: hidden;
+    }
+    .sheet.ouvert { transform: translateY(0); visibility: visible; }
+    .sheet::before {
+      content: ""; display: block; width: 40px; height: 4px; margin: -6px auto 12px;
+      background: #d1d5db; border-radius: 999px;
+    }
+    /* Sur grand écran : feuille flottante à gauche plutôt que pleine largeur */
+    @media (min-width: 641px) {
+      .sheet { left: 14px; right: auto; width: 320px; border-radius: 14px;
+               bottom: 74px; max-height: 76vh; }
+      .sheet::before { display: none; }
+    }
+    /* Cibles tactiles et champs lisibles (évite le zoom iOS) */
+    .sheet button, .sheet .btn-primary, .sheet .btn-ghost { padding: 11px 14px; font-size: 15px; }
+    .sheet input, .sheet select { font-size: 16px; padding: 10px; }
+    .maplibregl-popup-content { font-size: 14px; max-width: 82vw; }
+    .lien-menu { display: block; padding: 12px 4px; font-size: 15px; color: #2563eb;
+                 text-decoration: none; border-bottom: 1px solid #f0f0f0; }
+    .sheet h2 { margin: 0 0 8px; font-size: 15px; }
     button { cursor: pointer; padding: 8px 10px; border: 0; border-radius: 6px; font-size: 13px; }
     .btn-primary { background: #2563eb; color: #fff; }
     .btn-ghost { background: #eef; color: #2563eb; }
@@ -36,7 +72,7 @@
     style="position:absolute;top:14px;right:14px;z-index:2;background:#fff;border:0;
            padding:9px 14px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.2);
            font:14px system-ui;cursor:pointer">🛰️ Satellite</button>
-  <div id="legend" style="position:absolute;bottom:14px;left:14px;z-index:1;background:#fff;
+  <div id="legend" style="position:absolute;bottom:74px;left:14px;z-index:1;background:#fff;
        padding:8px 12px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.18);font:12px system-ui">
     <div style="font-weight:600;margin-bottom:4px">Statut des parcelles</div>
     <div><span style="display:inline-block;width:12px;height:12px;background:#3b82f6;border-radius:2px;margin-right:6px"></span>Tracée (en vérification)</div>
@@ -79,8 +115,8 @@
       </div>
     </div>
   </div>
-  <div id="panel">
-
+  <!-- ============ Feuille COMPTE ============ -->
+  <div id="sheet-compte" class="sheet">
     <!-- Connexion (si NON connecté) -->
     <div id="authBox">
       <h2>Connexion</h2>
@@ -95,12 +131,20 @@
         les notifications de suivi (facultatif pour se connecter).</p>
     </div>
 
-    <!-- Déclaration d'une parcelle (si connecté) -->
-    <div id="parcelBox" class="hidden">
+    <!-- Profil (si connecté) -->
+    <div id="profileBox" class="hidden">
       <div id="userbar"></div>
       <div id="emailBanner" style="display:none;background:#fef3c7;border:1px solid #fcd34d;
            color:#92400e;padding:8px 10px;border-radius:7px;font-size:12.5px;
            line-height:1.45;margin:8px 0"></div>
+      <div class="sep"></div>
+      <button class="btn-ghost" onclick="logout()">Se déconnecter</button>
+    </div>
+  </div>
+
+  <!-- ============ Feuille DÉCLARER ============ -->
+  <div id="sheet-declarer" class="sheet">
+    <div id="declarerConnecte">
       <h2>Déclarer une parcelle</h2>
       <p class="hint">1) Indiquez la localisation : cliquez sur la carte ou « Ma position ».<br>
          2) Enregistrez, puis ajoutez vos documents.<br>
@@ -112,22 +156,39 @@
         <button class="btn-primary" onclick="actionProtegee(this, saveParcelle)">Enregistrer</button>
       </div>
 
-      <!-- Documents (après enregistrement) -->
       <div id="docsBox" class="hidden">
         <div class="sep"></div>
         <h2>Parcelle #<span id="docs-parcel-id"></span> enregistrée</h2>
         <p class="hint">Ajoutez maintenant vos pièces justificatives (titre, acte, plan…).</p>
         <button class="btn-primary" onclick="openDocsPage()">Ajouter les documents ↗</button>
       </div>
-
-      <div class="sep"></div>
-      <a href="mes-parcelles.html" style="display:inline-block;font-size:13px;color:#2563eb;text-decoration:none;margin-bottom:8px">📋 Mes parcelles</a>
-      <a id="lien-geometre" href="geometre.html" style="display:none;font-size:13px;color:#2563eb;text-decoration:none;margin-bottom:8px">📐 Espace géomètre</a>
-      <a id="lien-dashboard" href="dashboard.html" style="display:none;font-size:13px;color:#2563eb;text-decoration:none;margin-bottom:8px">📊 Tableau de bord</a>
-      <button class="btn-ghost" onclick="logout()">Se déconnecter</button>
+      <div id="msg" class="hint"></div>
     </div>
+    <!-- Invitation à se connecter (si NON connecté) -->
+    <div id="declarerDeconnecte" class="hidden">
+      <h2>Déclarer une parcelle</h2>
+      <p class="hint">Connectez-vous d'abord pour déclarer une parcelle.</p>
+      <button class="btn-primary" onclick="ouvrirFeuille('compte')">Aller à la connexion</button>
+    </div>
+  </div>
 
-    <div id="msg" class="hint"></div>
+  <!-- ============ Feuille MENU ============ -->
+  <div id="sheet-menu" class="sheet">
+    <h2>Menu</h2>
+    <a class="lien-menu" href="mes-parcelles.html">📋 Mes parcelles</a>
+    <a id="lien-geometre" class="lien-menu" href="geometre.html" style="display:none">📐 Espace géomètre</a>
+    <a id="lien-dashboard" class="lien-menu" href="dashboard.html" style="display:none">📊 Tableau de bord</a>
+    <div id="menuDeconnecte" class="hint" style="margin-top:12px">Connectez-vous pour accéder à vos parcelles.</div>
+  </div>
+
+  <!-- ============ Barre d'icônes ============ -->
+  <div id="navbar">
+    <button id="nav-compte" onclick="ouvrirFeuille('compte')">
+      <span class="ic">👤</span><span id="nav-compte-label">Compte</span></button>
+    <button id="nav-declarer" onclick="ouvrirFeuille('declarer')">
+      <span class="ic">➕</span><span>Déclarer</span></button>
+    <button id="nav-menu" onclick="ouvrirFeuille('menu')">
+      <span class="ic">☰</span><span>Menu</span></button>
   </div>
 
   <script>
@@ -148,18 +209,47 @@
       el.textContent = text; el.className = cls || "hint";
     }
 
+    // ---------------- Feuilles (barre d'icônes) ----------------
+    let estConnecte = false;
+    let feuilleActive = null;
+
+    function ouvrirFeuille(nom) {
+      const sheets = { compte: "sheet-compte", declarer: "sheet-declarer", menu: "sheet-menu" };
+      const navs = { compte: "nav-compte", declarer: "nav-declarer", menu: "nav-menu" };
+      // Un 2e clic sur l'icône active referme la feuille.
+      if (feuilleActive === nom) { fermerFeuilles(); return; }
+      Object.values(sheets).forEach(id => document.getElementById(id).classList.remove("ouvert"));
+      Object.values(navs).forEach(id => document.getElementById(id).classList.remove("actif"));
+      document.getElementById(sheets[nom]).classList.add("ouvert");
+      document.getElementById(navs[nom]).classList.add("actif");
+      feuilleActive = nom;
+      rafraichirCarte();
+    }
+    function fermerFeuilles() {
+      ["sheet-compte", "sheet-declarer", "sheet-menu"].forEach(id =>
+        document.getElementById(id).classList.remove("ouvert"));
+      ["nav-compte", "nav-declarer", "nav-menu"].forEach(id =>
+        document.getElementById(id).classList.remove("actif"));
+      feuilleActive = null;
+      rafraichirCarte();
+    }
+
     // ---------------- Authentification ----------------
     function showLoggedIn(user) {
+      estConnecte = true;
       document.getElementById("authBox").classList.add("hidden");
-      document.getElementById("parcelBox").classList.remove("hidden");
+      document.getElementById("profileBox").classList.remove("hidden");
+      document.getElementById("declarerConnecte").classList.remove("hidden");
+      document.getElementById("declarerDeconnecte").classList.add("hidden");
+      document.getElementById("menuDeconnecte").style.display = "none";
       document.getElementById("userbar").innerHTML =
-        `Connecté : <b>${user.username}</b> (${user.role_display})`;
+        `👤 <b>${user.username}</b><br><span style="color:#6b7280;font-size:12px">${user.role_display}</span>`;
+      document.getElementById("nav-compte-label").textContent = user.username;
       window.__userEmail = user.email || "";
-      // Liens réservés à certains rôles.
       const geo = ["SURVEYOR", "ADMIN"].includes((user.role || "").toUpperCase()) || user.is_superuser;
       const adm = ["ADMIN"].includes((user.role || "").toUpperCase()) || user.is_superuser;
-      document.getElementById("lien-geometre").style.display = geo ? "inline-block" : "none";
-      document.getElementById("lien-dashboard").style.display = adm ? "inline-block" : "none";
+      document.getElementById("lien-geometre").style.display = geo ? "block" : "none";
+      document.getElementById("lien-dashboard").style.display = adm ? "block" : "none";
       majBandeauEmail(user);
     }
 
@@ -184,8 +274,15 @@
       } catch (e) { b.textContent = "Erreur réseau."; }
     }
     function showLoggedOut() {
+      estConnecte = false;
       document.getElementById("authBox").classList.remove("hidden");
-      document.getElementById("parcelBox").classList.add("hidden");
+      document.getElementById("profileBox").classList.add("hidden");
+      document.getElementById("declarerConnecte").classList.add("hidden");
+      document.getElementById("declarerDeconnecte").classList.remove("hidden");
+      document.getElementById("menuDeconnecte").style.display = "block";
+      document.getElementById("lien-geometre").style.display = "none";
+      document.getElementById("lien-dashboard").style.display = "none";
+      document.getElementById("nav-compte-label").textContent = "Compte";
     }
     async function register() {
       const username = document.getElementById("login-username").value.trim();
@@ -225,7 +322,11 @@
     // Service gratuit OpenFreeMap, sans clé d'API. Styles possibles :
     //   liberty (rues + bâtiments), positron (clair/épuré), bright (coloré).
     // Pour un rendu premium, remplacer par MapTiler/Mapbox (avec clé).
-    const map = new maplibregl.Map({
+    // Recentre la carte après ouverture/fermeture d'une feuille.
+    function rafraichirCarte() { setTimeout(() => { if (map) map.resize(); }, 250); }
+
+    let map = null;
+    map = new maplibregl.Map({
       container: "map",
       style: window.STYLE_PLAN,
       center: [1.2, 6.13], zoom: 16
@@ -402,8 +503,9 @@
     map.on("click", (e) => {
       const hits = map.queryRenderedFeatures(e.point, { layers: ["parcelles-fill"] });
       if (hits.length) { showParcelInfo(hits[0], e.lngLat); return; }
-      if (document.getElementById("parcelBox").classList.contains("hidden")) return; // pas connecté
+      if (!estConnecte) { ouvrirFeuille("compte"); return; } // invite à se connecter
       poserPoint(e.lngLat);
+      if (feuilleActive !== "declarer") ouvrirFeuille("declarer");
     });
 
     async function loadParcelles() {

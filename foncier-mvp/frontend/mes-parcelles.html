@@ -19,6 +19,42 @@
     .doc-link { color: #2563eb; text-decoration: none; font-size: 13px; font-weight: 600; }
     .msg { padding: 40px; text-align: center; color: #6b7280; }
     .msg.err { color: #b91c1c; }
+
+    /* ---------------- Mobile : chaque ligne devient une carte ---------------- */
+    @media (max-width: 640px) {
+      .wrap { padding: 16px 10px 50px; }
+      table, thead, tbody, tr, td, th { display: block; }
+      thead { display: none; }                      /* on masque l'en-tête */
+      tr { background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08);
+           margin-bottom: 12px; padding: 6px 4px; border-bottom: 0; }
+      td { border: 0; padding: 8px 14px; display: flex; justify-content: space-between;
+           align-items: center; gap: 12px; text-align: right; }
+      td::before {
+        content: attr(data-label); color: #6b7280; font-size: 12px; font-weight: 600;
+        text-transform: uppercase; letter-spacing: .02em; text-align: left; flex: 0 0 42%;
+      }
+      td.ref { font-size: 16px; }
+      .doc-link { font-size: 15px; }
+    }
+
+    /* ---------------- Mobile : chaque ligne devient une carte compacte ---------------- */
+    @media (max-width: 620px) {
+      header { padding: 14px 16px; }
+      header h1 { font-size: 16px; }
+      .wrap { padding: 16px 10px 40px; }
+      .card { background: transparent; box-shadow: none; }
+      table, tbody, tr, td { display: block; width: 100%; box-sizing: border-box; }
+      thead { display: none; }
+      tr { background: #fff; border-radius: 12px; box-shadow: 0 1px 5px rgba(0,0,0,.07);
+           margin-bottom: 12px; padding: 12px 14px; }
+      td { border: 0; padding: 2px 0; font-size: 14px; }
+      td.ref { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+      td:nth-child(2), td:nth-child(3), td:nth-child(4), td:nth-child(5) {
+        display: inline-block; margin-right: 12px; color: #6b7280; font-size: 13px;
+      }
+      td:last-child { margin-top: 8px; }
+      .doc-link { font-size: 14px; }
+    }
   </style>
 </head>
 <body>
@@ -77,12 +113,12 @@
       document.getElementById("rows").innerHTML = list.map(p => {
         const color = STATUT_COLORS[p.status] || "#999";
         return `<tr>
-          <td class="ref">${p.reference || ("#" + p.id)}</td>
-          <td><span class="badge" style="background:${color}">${p.status_display}</span></td>
-          <td>${p.reliability_display}</td>
-          <td>${fmtSurface(p.surface_m2)}</td>
-          <td>${fmtDate(p.created_at)}</td>
-          <td><a class="doc-link" href="documents.html?parcelle=${p.id}">Gérer les documents →</a></td>
+          <td class="ref" data-label="Référence">${p.reference || ("#" + p.id)}</td>
+          <td data-label="Statut"><span class="badge" style="background:${color}">${p.status_display}</span></td>
+          <td data-label="Fiabilité">${p.reliability_display}</td>
+          <td data-label="Dimension">${fmtSurface(p.surface_m2)}</td>
+          <td data-label="Déclarée le">${fmtDate(p.created_at)}</td>
+          <td data-label="Documents"><a class="doc-link" href="documents.html?parcelle=${p.id}">Gérer les documents →</a></td>
         </tr>`;
       }).join("");
 
