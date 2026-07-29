@@ -23,8 +23,15 @@
     .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
     .chart-box { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 5px rgba(0,0,0,.07); }
     .chart-box h2 { font-size: 15px; margin: 0 0 14px; }
+    .chart-box canvas { height: 300px !important; }
+    @media (max-width: 620px) { .chart-box canvas { height: 260px !important; } }
     #msg { padding: 40px; text-align: center; color: #b91c1c; font-size: 15px; }
     @media (max-width: 720px) { .charts { grid-template-columns: 1fr; } }
+    @media (max-width: 620px) {
+      header { padding: 14px 16px; flex-wrap: wrap; gap: 8px; } header h1 { font-size: 15px; }
+      .wrap { padding: 16px 10px 40px; }
+      .card .n { font-size: 24px; }
+    }
   </style>
 </head>
 <body>
@@ -98,7 +105,7 @@
           labels: entries.map(([k]) => STATUT_LABELS[k] || k),
           datasets: [{ data: entries.map(([, v]) => v), backgroundColor: entries.map(([k]) => STATUT_COLORS[k] || "#999") }]
         },
-        options: { plugins: { legend: { position: "bottom" } } }
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }
       });
 
       // --- Barres : dossiers à traiter ---
@@ -111,7 +118,7 @@
             backgroundColor: ["#f59e0b", "#3b82f6", "#ef4444", "#8b5cf6"]
           }]
         },
-        options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } }, x: { ticks: { font: { size: 10 } } } } }
       });
     }
 

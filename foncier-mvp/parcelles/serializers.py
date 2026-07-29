@@ -98,10 +98,11 @@ class DocumentSerializer(serializers.ModelSerializer):
     """
 
     download_url = serializers.SerializerMethodField()
+    doc_type_display = serializers.CharField(source="get_doc_type_display", read_only=True)
 
     class Meta:
         model = Document
-        fields = ["id", "doc_type", "file", "sha256", "created_at", "download_url"]
+        fields = ["id", "doc_type", "doc_type_display", "file", "sha256", "created_at", "download_url"]
         read_only_fields = ["sha256", "created_at"]
         extra_kwargs = {"file": {"write_only": True}}
 
@@ -157,3 +158,29 @@ class ParcelleFileAttenteSerializer(serializers.ModelSerializer):
 
     def get_deja_trace(self, obj):
         return hasattr(obj, "delimitation")
+
+
+class ParcelleFileNotaireSerializer(serializers.ModelSerializer):
+    """File de travail du notaire : parcelles tracées à valider juridiquement."""
+
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    nb_documents = serializers.SerializerMethodField()
+    surface_ha = serializers.SerializerMethodField()
+    decision = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Parcelle
+        fields = [
+            "id", "reference", "status", "status_display",
+            "surface_m2", "surface_ha", "nb_documents", "decision", "updated_at",
+        ]
+
+    def get_nb_documents(self, obj):
+        return obj.documents.count()
+
+    def get_surface_ha(self, obj):
+        return round(obj.surface_m2 / 10000, 4) if obj.surface_m2 else None
+
+    def get_decision(self, obj):
+        verif = getattr(obj, "verification", None)
+        return verif.decision if verif else "pending"

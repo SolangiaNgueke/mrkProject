@@ -19,11 +19,12 @@ from .geo import polygon_from_points, suggest_utm_epsg, utm_zone_label
 # double envoi (double-clic ou requête relancée) et non comme une 2e parcelle.
 DELAI_ANTI_DOUBLON = 60          # secondes
 DISTANCE_ANTI_DOUBLON_M = 25     # mètres
-from .models import Conflit, Delimitation, Document, Parcelle, Signalement
+from .models import Conflit, Delimitation, Document, Parcelle, Signalement, VerificationDossier
 from .permissions import IsOwnerOrStaffOrReadOnly
 from .serializers import (
     DocumentSerializer,
     ParcelleFileAttenteSerializer,
+    ParcelleFileNotaireSerializer,
     OverlapSerializer,
     ParcelleMineSerializer,
     ParcellePublicSerializer,
@@ -351,6 +352,14 @@ class ParcelleViewSet(viewsets.ModelViewSet):
             and (user.is_superuser or user.role in (user.Role.SURVEYOR, user.Role.ADMIN))
         )
 
+    @staticmethod
+    def _is_notary(user):
+        return bool(
+            user
+            and user.is_authenticated
+            and (user.is_superuser or user.role in (user.Role.NOTARY, user.Role.ADMIN))
+        )
+
     @action(detail=True, methods=["get"], url_path="suggest_crs")
     def suggest_crs(self, request, pk=None):
         """Propose automatiquement le système de coordonnées adapté à la
@@ -494,6 +503,121 @@ class ParcelleViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         return Response({"count": len(points), "points": points})
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="a_valider",
+        permission_classes=[IsAuthenticated],
+    )
+    def a_valider(self, request):
+        """File de travail du NOTAIRE : parcelles tracées en attente de validation
+        juridique (statut « en vérification »), plus celles qu'il a déjà traitées."""
+        if not self._is_notary(request.user):
+            return Response({"detail": "Réservé au notaire."}, status=status.HTTP_403_FORBIDDEN)
+
+        qs = (
+            Parcelle.objects.filter(
+                status__in=[Parcelle.Status.VERIFYING, Parcelle.Status.VALIDATED, Parcelle.Status.REJECTED]
+            )
+            .select_related("verification")
+            .prefetch_related("documents")
+            .order_by("status", "-updated_at")
+        )
+        data = ParcelleFileNotaireSerializer(qs, many=True).data
+        return Response({
+            "a_valider": sum(1 for p in data if p["status"] == "verifying"),
+            "traitees": sum(1 for p in data if p["status"] in ("validated", "rejected")),
+            "parcelles": data,
+        })
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="fiche_notaire",
+        permission_classes=[IsAuthenticated],
+    )
+    def fiche_notaire(self, request, pk=None):
+        """Fiche détaillée d'une parcelle pour la décision du notaire :
+        géométrie (tracé), documents justificatifs, et infos de référence."""
+        if not self._is_notary(request.user):
+            return Response({"detail": "Réservé au notaire."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            parcelle = Parcelle.objects.get(pk=pk)
+        except Parcelle.DoesNotExist:
+            raise Http404
+
+        geometry = None
+        if parcelle.geometry:
+            import json
+
+            geometry = json.loads(parcelle.geometry.geojson)
+
+        verif = getattr(parcelle, "verification", None)
+        return Response({
+            "id": parcelle.id,
+            "reference": parcelle.reference,
+            "status": parcelle.status,
+            "status_display": parcelle.get_status_display(),
+            "surface_m2": parcelle.surface_m2,
+            "geometry": geometry,
+            "documents": DocumentSerializer(
+                parcelle.documents.all(), many=True, context={"request": request}
+            ).data,
+            "decision": verif.decision if verif else "pending",
+            "comments": verif.comments if verif else "",
+        })
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="decision",
+        permission_classes=[IsAuthenticated],
+    )
+    def decision(self, request, pk=None):
+        """Décision du notaire : approuver ou rejeter (motif obligatoire au rejet)."""
+        if not self._is_notary(request.user):
+            return Response({"detail": "Réservé au notaire."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            parcelle = Parcelle.objects.get(pk=pk)
+        except Parcelle.DoesNotExist:
+            raise Http404
+
+        if not hasattr(parcelle, "delimitation"):
+            return Response(
+                {"detail": "Cette parcelle n'a pas encore été tracée par un géomètre."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        choix = request.data.get("decision")
+        motif = (request.data.get("comments") or "").strip()
+        if choix not in ("approved", "rejected"):
+            return Response({"detail": "Décision invalide."}, status=status.HTTP_400_BAD_REQUEST)
+        if choix == "rejected" and not motif:
+            return Response(
+                {"detail": "Un motif est obligatoire pour rejeter un dossier."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.utils import timezone
+
+        verif, _ = VerificationDossier.objects.get_or_create(parcelle=parcelle)
+        verif.decision = choix
+        verif.comments = motif
+        verif.notary = request.user
+        verif.decided_at = timezone.now()
+        verif.save()   # déclenche le recalcul du statut (validée / rejetée)
+
+        from .audit import journaliser
+
+        journaliser("verification", actor=request.user, parcelle=parcelle, decision=choix)
+
+        parcelle.refresh_from_db()
+        return Response({
+            "detail": "Dossier validé." if choix == "approved" else "Dossier rejeté.",
+            "status": parcelle.status,
+            "status_display": parcelle.get_status_display(),
+        })
 
     @action(
         detail=False,

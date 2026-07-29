@@ -30,6 +30,23 @@
     #map { height: 320px; border-radius: 10px; margin-top: 10px; }
     .epsg-line { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
     #msg { margin-top: 10px; }
+
+    /* ---------------- Mobile ---------------- */
+    @media (max-width: 600px) {
+      .wrap { padding: 16px 12px 50px; }
+      .card { padding: 16px; }
+      h1 { font-size: 18px; }
+      /* Champs à 16px : évite le zoom automatique d'iPhone à la saisie */
+      input, select { font-size: 16px; }
+      th, td { padding: 4px 3px; font-size: 13px; }
+      th:first-child, td:first-child { width: 20%; }
+      td input { width: 100%; }
+      /* Boutons pleine largeur, empilés */
+      .card > button, .epsg-line button { width: 100%; margin: 5px 0; padding: 12px; }
+      .epsg-line { flex-direction: column; align-items: stretch; }
+      #map { height: 260px; }
+      a.back { display: inline-block; padding: 6px 0; }
+    }
   </style>
 </head>
 <body>

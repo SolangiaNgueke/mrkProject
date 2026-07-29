@@ -177,6 +177,7 @@
     <h2>Menu</h2>
     <a class="lien-menu" href="mes-parcelles.html">📋 Mes parcelles</a>
     <a id="lien-geometre" class="lien-menu" href="geometre.html" style="display:none">📐 Espace géomètre</a>
+    <a id="lien-notaire" class="lien-menu" href="notaire.html" style="display:none">⚖️ Espace notaire</a>
     <a id="lien-dashboard" class="lien-menu" href="dashboard.html" style="display:none">📊 Tableau de bord</a>
     <div id="menuDeconnecte" class="hint" style="margin-top:12px">Connectez-vous pour accéder à vos parcelles.</div>
   </div>
@@ -247,8 +248,10 @@
       document.getElementById("nav-compte-label").textContent = user.username;
       window.__userEmail = user.email || "";
       const geo = ["SURVEYOR", "ADMIN"].includes((user.role || "").toUpperCase()) || user.is_superuser;
+      const notaire = ["NOTARY", "ADMIN"].includes((user.role || "").toUpperCase()) || user.is_superuser;
       const adm = ["ADMIN"].includes((user.role || "").toUpperCase()) || user.is_superuser;
       document.getElementById("lien-geometre").style.display = geo ? "block" : "none";
+      document.getElementById("lien-notaire").style.display = notaire ? "block" : "none";
       document.getElementById("lien-dashboard").style.display = adm ? "block" : "none";
       majBandeauEmail(user);
     }
@@ -281,6 +284,7 @@
       document.getElementById("declarerDeconnecte").classList.remove("hidden");
       document.getElementById("menuDeconnecte").style.display = "block";
       document.getElementById("lien-geometre").style.display = "none";
+      document.getElementById("lien-notaire").style.display = "none";
       document.getElementById("lien-dashboard").style.display = "none";
       document.getElementById("nav-compte-label").textContent = "Compte";
     }

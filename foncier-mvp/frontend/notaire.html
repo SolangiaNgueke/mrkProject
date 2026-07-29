@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Espace notaire</title>
+  <script src="config.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f3f4f6; color: #1f2937; }
+    header { background: #1f2d3a; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+    header h1 { font-size: 18px; margin: 0; }
+    header a { color: #93c5fd; text-decoration: none; font-size: 14px; }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 24px 16px 60px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 22px; }
+    .card { background: #fff; border-radius: 12px; padding: 16px 18px; box-shadow: 0 1px 5px rgba(0,0,0,.07); }
+    .card .n { font-size: 28px; font-weight: 700; }
+    .card .l { font-size: 13px; color: #6b7280; margin-top: 3px; }
+    .blue .n { color: #3b82f6; } .green .n { color: #22c55e; }
+    .panel { background: #fff; border-radius: 12px; box-shadow: 0 1px 5px rgba(0,0,0,.07); overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px 14px; text-align: left; font-size: 14px; border-bottom: 1px solid #f0f0f0; }
+    th { color: #6b7280; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+    .ref { font-weight: 600; }
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; color: #fff; white-space: nowrap; }
+    .btn-examiner { display: inline-block; padding: 7px 14px; border-radius: 7px; background: #2563eb;
+                    color: #fff; text-decoration: none; font-size: 13px; font-weight: 600; cursor: pointer; border: 0; }
+    .msg { padding: 40px; text-align: center; color: #6b7280; }
+    .msg.err { color: #b91c1c; }
+
+    /* Fenêtre de fiche détaillée */
+    #fiche { display: none; position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.5);
+             align-items: center; justify-content: center; padding: 16px; }
+    #fiche .contenu { background: #fff; border-radius: 14px; width: 640px; max-width: 100%;
+                      max-height: 92vh; overflow-y: auto; padding: 22px; }
+    #fiche h2 { margin: 0 0 4px; font-size: 18px; }
+    #fiche .sub { color: #6b7280; font-size: 13px; margin-bottom: 14px; }
+    #fmap { height: 260px; border-radius: 10px; margin: 10px 0; background: #eef; }
+    .doc-item { display: flex; justify-content: space-between; align-items: center;
+                padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+    .doc-item a { color: #2563eb; text-decoration: none; font-weight: 600; }
+    .decision-zone { margin-top: 16px; border-top: 2px solid #f0f0f0; padding-top: 16px; }
+    textarea { width: 100%; box-sizing: border-box; min-height: 70px; padding: 9px;
+               border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; font-family: inherit; }
+    .actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+    .btn-valider { background: #22c55e; color: #fff; border: 0; border-radius: 8px; padding: 12px 18px; font-size: 15px; cursor: pointer; }
+    .btn-rejeter { background: #ef4444; color: #fff; border: 0; border-radius: 8px; padding: 12px 18px; font-size: 15px; cursor: pointer; }
+    .btn-fermer { background: #eee; color: #333; border: 0; border-radius: 8px; padding: 12px 18px; font-size: 15px; cursor: pointer; margin-left: auto; }
+    #fiche-msg { font-size: 14px; margin-top: 10px; }
+
+    @media (max-width: 640px) {
+      header { padding: 14px 16px; } header h1 { font-size: 15px; }
+      .wrap { padding: 16px 10px 40px; }
+      .panel { background: transparent; box-shadow: none; }
+      table, tbody, tr, td { display: block; width: 100%; box-sizing: border-box; }
+      thead { display: none; }
+      tr { background: #fff; border-radius: 12px; box-shadow: 0 1px 5px rgba(0,0,0,.07);
+           margin-bottom: 12px; padding: 4px 4px; }
+      td { border: 0; padding: 10px 16px; display: grid; grid-template-columns: 42% 1fr;
+           column-gap: 14px; align-items: center; text-align: right; }
+      td::before { content: attr(data-label); color: #6b7280; font-size: 12px; font-weight: 600;
+                   text-transform: uppercase; letter-spacing: .03em; text-align: left; }
+      td.ref { font-size: 16px; font-weight: 700; }
+      td.action { display: block; } td.action::before { content: ""; display: none; }
+      .btn-examiner { width: 100%; text-align: center; padding: 12px; }
+      .btn-fermer { margin-left: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Espace notaire — validation juridique</h1>
+    <a href="index.html">← Carte publique</a>
+  </header>
+
+  <div class="wrap">
+    <div id="msg" class="msg">Chargement…</div>
+
+    <div id="contenu" style="display:none">
+      <div class="cards">
+        <div class="card blue"><div class="n" id="n-avalider">0</div><div class="l">En attente de validation</div></div>
+        <div class="card green"><div class="n" id="n-traitees">0</div><div class="l">Déjà traitées</div></div>
+      </div>
+      <div class="panel">
+        <table>
+          <thead>
+            <tr><th>Référence</th><th>Statut</th><th>Superficie</th><th>Documents</th><th></th></tr>
+          </thead>
+          <tbody id="lignes"></tbody>
+        </table>
+        <div id="vide" class="msg" style="display:none">Aucun dossier à valider pour le moment.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fiche détaillée -->
+  <div id="fiche">
+    <div class="contenu">
+      <h2 id="f-ref"></h2>
+      <div class="sub" id="f-sub"></div>
+      <div id="fmap"></div>
+      <h3 style="font-size:15px;margin:14px 0 4px">Documents justificatifs</h3>
+      <div id="f-docs"></div>
+      <div class="decision-zone">
+        <h3 style="font-size:15px;margin:0 0 8px">Décision</h3>
+        <label style="font-size:13px;color:#555">Commentaire (obligatoire en cas de rejet)</label>
+        <textarea id="f-comment" placeholder="Motif de la décision…"></textarea>
+        <div id="fiche-msg"></div>
+        <div class="actions">
+          <button class="btn-valider" onclick="decider('approved')">✓ Valider</button>
+          <button class="btn-rejeter" onclick="decider('rejected')">✗ Rejeter</button>
+          <button class="btn-fermer" onclick="fermerFiche()">Fermer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = window.API_ROOT + "parcelles/";
+    const token = localStorage.getItem("foncier_token");
+    let ficheCourante = null, fmap = null;
+
+    const COULEURS = { verifying: "#3b82f6", validated: "#22c55e", rejected: "#6b7280" };
+
+    function setMsg(t, err) {
+      const m = document.getElementById("msg");
+      m.textContent = t; m.className = "msg" + (err ? " err" : ""); m.style.display = "block";
+    }
+    function fmtSurface(m2) {
+      if (!m2) return "—";
+      return `${Math.round(m2).toLocaleString("fr-FR")} m² (${(m2/10000).toFixed(2)} ha)`;
+    }
+
+    async function charger() {
+      if (!token) { setMsg("Connectez-vous en notaire sur la carte, puis revenez sur cette page.", true); return; }
+      let res;
+      try { res = await fetch(API + "a_valider/", { headers: { "Authorization": "Token " + token } }); }
+      catch (e) { setMsg("Erreur réseau : " + e, true); return; }
+      if (res.status === 403) { setMsg("Accès réservé au notaire.", true); return; }
+      if (res.status === 401) { setMsg("Session expirée. Reconnectez-vous sur la carte.", true); return; }
+      if (!res.ok) { setMsg("Impossible de charger la liste.", true); return; }
+
+      const d = await res.json();
+      document.getElementById("n-avalider").textContent = d.a_valider;
+      document.getElementById("n-traitees").textContent = d.traitees;
+      const liste = d.parcelles || [];
+
+      document.getElementById("lignes").innerHTML = liste.map(p => {
+        const enAttente = p.status === "verifying";
+        const bouton = enAttente
+          ? `<button class="btn-examiner" onclick="ouvrirFiche(${p.id})">Examiner →</button>`
+          : `<button class="btn-examiner" style="background:#6b7280" onclick="ouvrirFiche(${p.id})">Revoir</button>`;
+        return `<tr>
+          <td class="ref" data-label="Référence">${p.reference || ("#" + p.id)}</td>
+          <td data-label="Statut"><span class="badge" style="background:${COULEURS[p.status] || "#999"}">${p.status_display}</span></td>
+          <td data-label="Superficie">${fmtSurface(p.surface_m2)}</td>
+          <td data-label="Documents">${p.nb_documents}</td>
+          <td class="action">${bouton}</td>
+        </tr>`;
+      }).join("");
+
+      document.getElementById("vide").style.display = liste.length ? "none" : "block";
+      document.getElementById("msg").style.display = "none";
+      document.getElementById("contenu").style.display = "block";
+    }
+
+    async function ouvrirFiche(id) {
+      ficheCourante = id;
+      document.getElementById("fiche-msg").textContent = "";
+      document.getElementById("f-comment").value = "";
+      const res = await fetch(`${API}${id}/fiche_notaire/`, { headers: { "Authorization": "Token " + token } });
+      if (!res.ok) { alert("Impossible de charger la fiche."); return; }
+      const d = await res.json();
+
+      document.getElementById("f-ref").textContent = d.reference || ("#" + d.id);
+      document.getElementById("f-sub").textContent =
+        `${d.status_display} · ${fmtSurface(d.surface_m2)}`;
+
+      // Documents
+      document.getElementById("f-docs").innerHTML = (d.documents && d.documents.length)
+        ? d.documents.map(doc => `<div class="doc-item">
+             <span>${doc.doc_type_display || doc.doc_type}</span>
+             <a href="#" onclick="telecharger(${d.id}, ${doc.id});return false;">Télécharger</a>
+           </div>`).join("")
+        : "<div class='sub'>Aucun document fourni.</div>";
+
+      document.getElementById("fiche").style.display = "flex";
+      afficherCarte(d.geometry);
+    }
+
+    function afficherCarte(geometry) {
+      const div = document.getElementById("fmap");
+      if (!geometry) { div.style.display = "none"; return; }
+      div.style.display = "block";
+      setTimeout(() => {
+        if (!fmap) {
+          fmap = new maplibregl.Map({ container: "fmap", style: window.STYLE_SAT, center: [1.2, 6.13], zoom: 15 });
+        }
+        const dessiner = () => {
+          if (fmap.getSource("parc")) fmap.getSource("parc").setData(geometry);
+          else {
+            fmap.addSource("parc", { type: "geojson", data: geometry });
+            fmap.addLayer({ id: "parc-f", type: "fill", source: "parc", paint: { "fill-color": "#22c55e", "fill-opacity": .4 } });
+            fmap.addLayer({ id: "parc-l", type: "line", source: "parc", paint: { "line-color": "#fff", "line-width": 2 } });
+          }
+          const c = geometry.coordinates[0];
+          const lons = c.map(p => p[0]), lats = c.map(p => p[1]);
+          fmap.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 40 });
+        };
+        if (fmap.isStyleLoaded()) dessiner(); else fmap.once("load", dessiner);
+        fmap.resize();
+      }, 100);
+    }
+
+    function fermerFiche() { document.getElementById("fiche").style.display = "none"; }
+
+    async function telecharger(parcelId, docId) {
+      try {
+        const res = await fetch(`${API}${parcelId}/documents/${docId}/download/`,
+          { headers: { "Authorization": "Token " + token } });
+        if (!res.ok) { alert("Téléchargement impossible."); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = "document";
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) { alert("Erreur réseau."); }
+    }
+
+    async function decider(choix) {
+      const msg = document.getElementById("fiche-msg");
+      const comment = document.getElementById("f-comment").value.trim();
+      if (choix === "rejected" && !comment) {
+        msg.textContent = "Un motif est obligatoire pour rejeter."; msg.style.color = "#b91c1c"; return;
+      }
+      msg.textContent = "Envoi…"; msg.style.color = "#555";
+      try {
+        const res = await fetch(`${API}${ficheCourante}/decision/`, {
+          method: "POST",
+          headers: { "Authorization": "Token " + token, "Content-Type": "application/json" },
+          body: JSON.stringify({ decision: choix, comments: comment })
+        });
+        const d = await res.json();
+        if (!res.ok) { msg.textContent = d.detail || "Erreur."; msg.style.color = "#b91c1c"; return; }
+        msg.textContent = d.detail; msg.style.color = "#15803d";
+        setTimeout(() => { fermerFiche(); charger(); }, 1200);
+      } catch (e) { msg.textContent = "Erreur réseau."; msg.style.color = "#b91c1c"; }
+    }
+
+    charger();
+  </script>
+</body>
+</html>

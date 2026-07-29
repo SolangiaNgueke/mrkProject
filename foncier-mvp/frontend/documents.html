@@ -29,6 +29,24 @@
     .doc-form td { padding: 8px 6px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
     .doc-form .t-label { font-weight: 600; font-size: 14px; width: 38%; }
     .doc-form input[type=file] { font-size: 13px; }
+
+    /* ---------------- Mobile ---------------- */
+    @media (max-width: 600px) {
+      .wrap { padding: 16px 12px 50px; }
+      .card { padding: 16px; }
+      h1 { font-size: 18px; }
+      button, .btn-primary, .btn-ghost { padding: 12px 16px; font-size: 15px; }
+      /* Chaque type de document : libellé au-dessus, champ fichier en dessous */
+      .doc-form, .doc-form tbody, .doc-form tr, .doc-form td { display: block; width: 100%; box-sizing: border-box; }
+      .doc-form tr { border-bottom: 1px solid #f0f0f0; padding: 8px 0; }
+      .doc-form td { border: 0; padding: 4px 0; }
+      .doc-form .t-label { width: auto; font-size: 15px; }
+      .doc-form input[type=file] { font-size: 15px; width: 100%; }
+      /* Documents enregistrés : nom + boutons empilés */
+      .doc-row { flex-direction: column; align-items: stretch; gap: 8px; }
+      .doc-row > div:last-child { display: flex; gap: 8px; }
+      .doc-row button { flex: 1; }
+    }
   </style>
 </head>
 <body>
