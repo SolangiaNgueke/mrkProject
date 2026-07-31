@@ -1,0 +1,71 @@
+# Intégration continue : à chaque push (et chaque pull request), on installe
+# les dépendances, on démarre une base PostGIS, et on exécute toute la suite de
+# tests. Si un test échoue, GitHub marque le commit en rouge — le problème est
+# vu AVANT le déploiement, sans avoir à cliquer dans l'application.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    # Base de données PostGIS, identique à celle utilisée en développement.
+    services:
+      db:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: foncier
+          POSTGRES_USER: foncier
+          POSTGRES_PASSWORD: foncier
+        ports:
+          - 5432:5432
+        # Attend que la base soit prête avant de lancer les tests.
+        options: >-
+          --health-cmd "pg_isready -U foncier"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DEBUG: "1"                 # mode test : pas de garde-fous de production
+      SECRET_KEY: "cle-de-test-ci"
+      POSTGRES_DB: foncier
+      POSTGRES_USER: foncier
+      POSTGRES_PASSWORD: foncier
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Bibliothèques géospatiales requises par GeoDjango (GDAL, GEOS, PROJ)
+      # et par l'OCR (Tesseract) — absentes par défaut du runner.
+      - name: Installer les dépendances système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils libproj-dev gdal-bin libgdal-dev tesseract-ocr
+
+      - name: Installer les dépendances Python
+        working-directory: foncier-mvp
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Vérifier les migrations manquantes
+        working-directory: foncier-mvp
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Lancer les tests
+        working-directory: foncier-mvp
+        run: python manage.py test parcelles --verbosity 2
