@@ -504,6 +504,59 @@ class ParcelleViewSet(viewsets.ModelViewSet):
             )
         return Response({"count": len(points), "points": points})
 
+    @action(detail=True, methods=["get"], url_path="documents_ocr")
+    def documents_ocr(self, request, pk=None):
+        """Liste les documents du dossier que le géomètre peut lire par OCR.
+
+        Réservé au géomètre. Renvoie tous les types de pièces (plan, titre,
+        acte…) pour qu'il choisisse LE document déjà fourni par le citoyen,
+        plutôt que d'en re-téléverser un depuis son ordinateur (source d'erreur).
+        """
+        if not self._is_surveyor(request.user):
+            return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
+        parcelle = self.get_object()
+        docs = [
+            {
+                "id": d.id,
+                "type": d.doc_type,
+                "type_display": d.get_doc_type_display(),
+                "filename": d.file.name.split("/")[-1],
+            }
+            for d in parcelle.documents.all().order_by("doc_type")
+        ]
+        return Response({"documents": docs})
+
+    @action(detail=True, methods=["post"], url_path="ocr_document")
+    def ocr_document(self, request, pk=None):
+        """Lance l'OCR sur un document DÉJÀ stocké dans le dossier.
+
+        Le géomètre indique l'identifiant du document ; le serveur le lit et ne
+        renvoie QUE les points de bornage détectés — jamais le fichier lui-même.
+        Il peut ainsi tracer à partir d'un titre foncier sans pouvoir le
+        télécharger (le moindre privilège sur les documents reste préservé).
+        """
+        if not self._is_surveyor(request.user):
+            return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
+        parcelle = self.get_object()
+
+        doc_id = request.data.get("document_id")
+        try:
+            doc = parcelle.documents.get(pk=doc_id)
+        except Document.DoesNotExist:
+            raise Http404
+
+        from .ocr import extract_boundary_points
+
+        try:
+            with doc.file.open("rb") as f:
+                points = extract_boundary_points(f.read())
+        except Exception as exc:  # noqa: BLE001
+            return Response(
+                {"detail": f"OCR indisponible : {exc}"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response({"count": len(points), "points": points})
+
     @action(
         detail=False,
         methods=["get"],

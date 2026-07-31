@@ -226,4 +226,37 @@ class AuditTests(BaseData):
         ok, n, rupture = verifier_integrite()
         self.assertTrue(ok)
         self.assertGreaterEqual(n, 2)
-        self.assertIs
+        self.assertIsNone(rupture)
+
+
+class OcrDossierTests(BaseData):
+    """Le géomètre lit les documents du dossier (sans pouvoir les télécharger)."""
+
+    def setUp(self):
+        super().setUp()
+        from django.core.files.base import ContentFile
+        self.parcelle = Parcelle.objects.create(
+            owner=self.citoyen, declared_location=Point(1.2, 6.1),
+            status=Parcelle.Status.VERIFYING,
+        )
+        self.titre = Document.objects.create(
+            parcelle=self.parcelle, doc_type=Document.DocType.TITLE,
+            file=ContentFile(b"titre", name="titre.pdf"),
+        )
+
+    def test_liste_documents_ocr_reservee_au_geometre(self):
+        _auth(self.client, self.citoyen)
+        r = self.client.get(f"/api/parcelles/{self.parcelle.id}/documents_ocr/")
+        self.assertEqual(r.status_code, 403)
+
+    def test_geometre_voit_tous_les_documents_du_dossier(self):
+        _auth(self.client, self.geometre)
+        r = self.client.get(f"/api/parcelles/{self.parcelle.id}/documents_ocr/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.data["documents"]), 1)  # le titre est listable pour OCR
+
+    def test_ocr_document_reserve_au_geometre(self):
+        _auth(self.client, self.citoyen)
+        r = self.client.post(f"/api/parcelles/{self.parcelle.id}/ocr_document/",
+                             {"document_id": self.titre.id}, format="json")
+        self.assertEqual(r.status_code, 403)
