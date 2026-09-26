@@ -19,7 +19,7 @@ from .geo import polygon_from_points, suggest_utm_epsg, utm_zone_label
 # double envoi (double-clic ou requête relancée) et non comme une 2e parcelle.
 DELAI_ANTI_DOUBLON = 60          # secondes
 DISTANCE_ANTI_DOUBLON_M = 25     # mètres
-from .models import Conflit, Delimitation, Document, Parcelle, Signalement, VerificationDossier
+from .models import Conflit, Delimitation, Document, Parcelle, Signalement, VerificationDossier, ZoneEtat
 from .permissions import IsOwnerOrStaffOrReadOnly
 from .serializers import (
     DocumentSerializer,
@@ -146,11 +146,17 @@ class ParcelleViewSet(viewsets.ModelViewSet):
             owner=request.user, status=Parcelle.Status.SUBMITTED
         )
 
+        # Alerte si le point tombe dans une zone de l'État (forêt classée…).
+        zone = ZoneEtat.objects.filter(geometry__contains=point).first() if point else None
+
         # Accusé de réception au propriétaire + journal d'audit.
         from .audit import journaliser
         from .notifications import notify_submission
 
         journaliser("parcelle_declaree", actor=request.user, parcelle=parcelle)
+        if zone:
+            journaliser("parcelle_declaree", actor=request.user, parcelle=parcelle,
+                        alerte_zone_etat=zone.name)
         notify_submission(parcelle)
 
         data = ParcelleSubmitSerializer(parcelle).data
@@ -163,6 +169,9 @@ class ParcelleViewSet(viewsets.ModelViewSet):
                 geometry__contains=parcelle.declared_location,
             ).exists()
         data["already_registered_zone"] = already
+        # Alerte forte : déclaration dans un domaine de l'État.
+        if zone:
+            data["zone_etat"] = {"nom": zone.name, "type": zone.get_type_zone_display()}
         return Response(data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"])
@@ -429,13 +438,116 @@ class ParcelleViewSet(viewsets.ModelViewSet):
                 {"detail": f"Coordonnées invalides : {exc}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        return self._enregistrer_trace(request, parcelle, poly, points, int(source_epsg))
 
+    @action(detail=True, methods=["get"], url_path="certificat", permission_classes=[IsAuthenticated])
+    def certificat(self, request, pk=None):
+        """Génère et renvoie le Certificat de Vérification (PDF) d'une parcelle.
+
+        Uniquement pour les parcelles VALIDÉES. Accessible au propriétaire et à
+        l'administrateur. Le PDF est généré à la volée (rien n'est stocké).
+        """
+        parcelle = self.get_object()
+        user = request.user
+        is_owner = parcelle.owner_id == user.id
+        is_admin = user.is_superuser or user.role == user.Role.ADMIN
+        if not (is_owner or is_admin):
+            return Response({"detail": "Accès refusé."}, status=status.HTTP_403_FORBIDDEN)
+        if parcelle.status != Parcelle.Status.VALIDATED:
+            return Response(
+                {"detail": "Le certificat n'est disponible que pour une parcelle validée."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from .certificat import generer_certificat
+
+        nom, contenu = generer_certificat(parcelle)
+        from django.http import HttpResponse
+
+        resp = HttpResponse(contenu, content_type="application/pdf")
+        resp["Content-Disposition"] = f'attachment; filename="{nom}"'
+        return resp
+
+    @action(detail=False, methods=["post"], url_path="nouveau_trace", permission_classes=[IsAuthenticated])
+    def nouveau_trace(self, request):
+        """Crée une parcelle VIERGE que le géomètre va tracer directement.
+
+        Pour les relevés autonomes : le géomètre n'attend pas qu'un citoyen ait
+        déclaré la parcelle. Elle reçoit une référence et une localisation
+        provisoire (le centre de la carte), puis passe par le tracé habituel.
+        """
+        if not self._is_surveyor(request.user):
+            return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
+
+        from django.contrib.gis.geos import Point as GEOSPoint
+
+        # Localisation provisoire fournie par le client (centre de la carte),
+        # sinon un point par défaut au Togo. Le tracé la remplacera.
+        lon = request.data.get("lon")
+        lat = request.data.get("lat")
+        try:
+            point = GEOSPoint(float(lon), float(lat), srid=4326) if lon and lat else GEOSPoint(1.2, 6.13, srid=4326)
+        except (TypeError, ValueError):
+            point = GEOSPoint(1.2, 6.13, srid=4326)
+
+        parcelle = Parcelle.objects.create(
+            owner=request.user,
+            declared_location=point,
+            status=Parcelle.Status.SUBMITTED,
+            name_owner_public=False,
+        )
+        from .audit import journaliser
+
+        journaliser("parcelle_declaree", actor=request.user, parcelle=parcelle,
+                    trace_geometre_autonome=True)
+        return Response(
+            {"id": parcelle.id, "reference": parcelle.reference},
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"], url_path="delimitation_freehand")
+    def delimitation_freehand(self, request, pk=None):
+        """Tracé à MAIN LEVÉE : le géomètre dessine le polygone sur la carte.
+
+        Reçoit directement l'anneau de sommets en lon/lat (WGS84). Autonome :
+        ne dépend d'aucun document. Suit ensuite le même circuit que le tracé
+        par coordonnées (détection de litige, audit, statut « non vérifié »).
+        """
+        if not self._is_surveyor(request.user):
+            return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
+        parcelle = self.get_object()
+
+        ring = request.data.get("ring")  # [[lon,lat], [lon,lat], ...]
+        if not ring or len(ring) < 3:
+            return Response(
+                {"detail": "Un tracé exige au moins 3 sommets."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from django.contrib.gis.geos import Polygon as GEOSPolygon
+
+        try:
+            coords = [(float(x), float(y)) for x, y in ring]
+            if coords[0] != coords[-1]:
+                coords.append(coords[0])          # ferme l'anneau
+            poly = GEOSPolygon(coords, srid=4326)
+        except Exception as exc:  # noqa: BLE001
+            return Response(
+                {"detail": f"Tracé invalide : {exc}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # boundary_points : on mémorise les sommets lon/lat (source = WGS84).
+        pts = [{"name": f"P{i+1}", "x": x, "y": y} for i, (x, y) in enumerate(coords[:-1])]
+        return self._enregistrer_trace(request, parcelle, poly, pts, 4326, main_levee=True)
+
+    def _enregistrer_trace(self, request, parcelle, poly, points, source_epsg, main_levee=False):
+        """Logique COMMUNE aux deux modes de tracé (coordonnées et main levée) :
+        enregistre la géométrie, crée la délimitation, détecte les litiges,
+        journalise, et renvoie la réponse (surface + conflits)."""
         # Le tracé du géomètre devient la géométrie de la parcelle : elle
-        # apparaît immédiatement sur la carte (bleu) et sert à détecter les conflits.
+        # apparaît immédiatement sur la carte (gris) et sert à détecter les conflits.
         parcelle.geometry = poly
         parcelle.save(update_fields=["geometry", "surface_m2", "updated_at"])
 
-        # Crée ou met à jour la délimitation (déclenche le signal de statut).
         delim, _ = Delimitation.objects.update_or_create(
             parcelle=parcelle,
             defaults={
@@ -447,15 +559,13 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         )
         surface = round(poly.transform(6933, clone=True).area, 2)
 
-        # Détection AUTOMATIQUE des litiges : crée les alertes (Conflit) pour
-        # l'administrateur, passe les parcelles concernées en rouge, résout ce
-        # qui ne se chevauche plus. (Réponse au géomètre : conflit anonymisé.)
         from .audit import journaliser
         from .signals import recompute_conflicts
 
         journaliser(
             "trace_valide", actor=request.user, parcelle=parcelle,
             surface_m2=surface, epsg=int(source_epsg), nb_points=len(points),
+            main_levee=main_levee,
         )
         recompute_conflicts(parcelle)
 
@@ -478,13 +588,48 @@ class ParcelleViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["post"],
+        url_path="import_txt",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def import_txt(self, request, pk=None):
+        """Lit un fichier .txt de coordonnées et renvoie les points détectés.
+
+        Comme l'OCR, ne sauvegarde rien : le géomètre vérifie/corrige, choisit
+        l'EPSG, puis valide. Réservé au géomètre.
+        """
+        if not self._is_surveyor(request.user):
+            return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
+        self.get_object()
+
+        f = request.FILES.get("file")
+        if not f:
+            return Response({"detail": "Aucun fichier fourni."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .ocr import parse_coordonnees_texte
+
+        try:
+            points = parse_coordonnees_texte(f.read())
+        except Exception as exc:  # noqa: BLE001
+            return Response(
+                {"detail": f"Lecture impossible : {exc}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({"count": len(points), "points": points})
+
+    @action(
+        detail=True,
+        methods=["post"],
         url_path="ocr_plan",
         parser_classes=[MultiPartParser, FormParser],
     )
     def ocr_plan(self, request, pk=None):
-        """Lit un plan (image) et renvoie les points de bornage détectés.
-        NE sauvegarde rien : le géomètre vérifie/corrige, puis appelle
-        delimitation_from_points. L'OCR ne fait que pré-remplir."""
+        """Lit un fichier de plan et renvoie les points de bornage détectés.
+
+        Accepte une IMAGE, un PDF ou un fichier .txt de coordonnées : le type est
+        détecté automatiquement (le .txt passe par le lecteur de coordonnées, le
+        reste par l'OCR). NE sauvegarde rien : le géomètre vérifie/corrige, puis
+        valide. Ne fait que pré-remplir le tableau.
+        """
         if not self._is_surveyor(request.user):
             return Response({"detail": "Réservé au géomètre."}, status=status.HTTP_403_FORBIDDEN)
         self.get_object()  # vérifie l'existence de la parcelle
@@ -493,16 +638,23 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         if not upload:
             return Response({"detail": "Aucun fichier fourni."}, status=status.HTTP_400_BAD_REQUEST)
 
-        from .ocr import extract_boundary_points
+        contenu = upload.read()
+        nom = (upload.name or "").lower()
+        est_texte = nom.endswith(".txt") or nom.endswith(".csv") or nom.endswith(".dat")
+
+        from .ocr import extract_boundary_points, parse_coordonnees_texte
 
         try:
-            points = extract_boundary_points(upload.read())
+            if est_texte:
+                points = parse_coordonnees_texte(contenu)   # fichier de coordonnées
+            else:
+                points = extract_boundary_points(contenu)    # image ou PDF -> OCR
         except Exception as exc:  # noqa: BLE001
             return Response(
-                {"detail": f"OCR indisponible : {exc}"},
+                {"detail": f"Lecture impossible : {exc}"},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        return Response({"count": len(points), "points": points})
+        return Response({"count": len(points), "points": points, "source": "txt" if est_texte else "ocr"})
 
     @action(detail=True, methods=["get"], url_path="documents_ocr")
     def documents_ocr(self, request, pk=None):
@@ -714,6 +866,69 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         """Liste les parcelles du propriétaire connecté (même privées/non tracées)."""
         qs = Parcelle.objects.filter(owner=request.user).order_by("-created_at")
         return Response(ParcelleMineSerializer(qs, many=True).data)
+
+    @action(detail=False, methods=["get"], url_path="zones_etat", permission_classes=[AllowAny])
+    def zones_etat(self, request):
+        """Zones de l'État (forêts classées, réserves…) au format GeoJSON.
+
+        Couche de référence publique, affichée en permanence sur la carte.
+        """
+        features = []
+        for z in ZoneEtat.objects.all():
+            features.append({
+                "type": "Feature",
+                "geometry": json.loads(z.geometry.geojson),
+                "properties": {
+                    "id": z.id, "name": z.name,
+                    "type": z.type_zone, "type_display": z.get_type_zone_display(),
+                },
+            })
+        return Response({"type": "FeatureCollection", "features": features})
+
+    @action(detail=False, methods=["get"], url_path="recherche", permission_classes=[AllowAny])
+    def recherche(self, request):
+        """Recherche publique : par référence de terrain OU par nom de région.
+
+        Renvoie les parcelles publiques dont la référence correspond, et, si le
+        texte évoque une région, le centre de cette région (pour y centrer la
+        carte). La recherche par ville se fait côté client (géocodage MapTiler).
+        """
+        q = (request.query_params.get("q") or "").strip()
+        if len(q) < 2:
+            return Response({"parcelles": [], "region": None})
+
+        # --- Parcelles par référence (publiques uniquement) ---
+        parcelles = []
+        qs = Parcelle.objects.filter(
+            status__in=self.PUBLIC_STATUSES, reference__icontains=q
+        ).order_by("-created_at")[:10]
+        for p in qs:
+            centre = p.geometry.centroid if p.geometry else p.declared_location
+            if not centre:
+                continue
+            parcelles.append({
+                "id": p.id, "reference": p.reference, "status": p.status,
+                "lon": round(centre.x, 6), "lat": round(centre.y, 6),
+            })
+
+        # --- Région (frontières officielles si importées) ---
+        region = None
+        try:
+            from .geoloc import normaliser
+            from .models import AdminBoundary
+
+            cible = normaliser(q)
+            if cible:
+                for b in AdminBoundary.objects.filter(level=1):
+                    nom_norm = normaliser(b.name)
+                    if nom_norm == cible or cible in nom_norm:
+                        c = b.geometry.centroid
+                        region = {"nom": b.name, "lon": round(c.x, 6), "lat": round(c.y, 6)}
+                        break
+        except Exception:  # noqa: BLE001
+            region = None
+
+        return Response({"parcelles": parcelles, "region": region})
 
     # ------------------------------------------------------------------ #
     #  Signalement communautaire                                          #

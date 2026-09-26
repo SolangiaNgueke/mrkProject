@@ -16,16 +16,19 @@ window.API_PROD = "https://mylandsure.onrender.com/api/";
 // Clé MapTiler (fonds de carte haute qualité, plan + satellite).
 // Laisser vide -> repli automatique sur OpenFreeMap + Esri (moins net).
 // À restreindre par domaine depuis le tableau de bord MapTiler.
-window.MAPTILER_KEY = "COLLE_TA_CLE_ICI";
+window.MAPTILER_KEY = "3VtiMKqdlpqOeW5Lnv4u";
 
 // --- Styles de carte (calculés à partir de la clé) ---
 (function () {
   const k = window.MAPTILER_KEY;
-  const actif = k && k !== "COLLE_TA_CLE_ICI";
+  const actif = k && k !== "3VtiMKqdlpqOeW5Lnv4u";
 
   // Fond « plan » : rues et bâtiments, style clair à la Zillow.
+  // Fond « plan » — CHOIX DÉFINITIF : MapTiler "dataviz".
+  // Fond clair et neutre, spécialement conçu pour faire ressortir des données
+  // posées par-dessus (ici les parcelles bleu/vert/rouge). Repli : OpenFreeMap.
   window.STYLE_PLAN = actif
-    ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${k}`
+    ? `https://api.maptiler.com/maps/dataviz/style.json?key=${k}`
     : "https://tiles.openfreemap.org/styles/liberty";
 
   // Fond « satellite » : imagerie aérienne. Le style "hybrid" de MapTiler

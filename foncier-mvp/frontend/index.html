@@ -68,16 +68,32 @@
 </head>
 <body>
   <div id="map"></div>
+  <!-- Barre de recherche : référence de terrain, ville/lieu, ou région -->
+  <div id="searchbar" style="position:absolute;top:12px;left:50%;transform:translateX(-50%);
+       z-index:3;width:min(460px,calc(100vw - 28px))">
+    <div style="display:flex;background:#fff;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.2);overflow:hidden">
+      <input id="search-input" type="search" autocomplete="off"
+        placeholder="Rechercher : réf. TG-1-…, une ville, une région…"
+        style="flex:1;border:0;padding:11px 14px;font-size:14px;outline:none"
+        onkeydown="if(event.key==='Enter')lancerRecherche()" />
+      <button onclick="lancerRecherche()" aria-label="Rechercher"
+        style="border:0;background:#2563eb;color:#fff;padding:0 16px;cursor:pointer;font-size:16px">🔍</button>
+    </div>
+    <div id="search-results" style="display:none;background:#fff;margin-top:6px;border-radius:10px;
+         box-shadow:0 2px 12px rgba(0,0,0,.2);max-height:50vh;overflow-y:auto"></div>
+  </div>
+
   <button id="basemap-btn" onclick="toggleBasemap()"
-    style="position:absolute;top:14px;right:14px;z-index:2;background:#fff;border:0;
+    style="position:absolute;top:64px;right:14px;z-index:2;background:#fff;border:0;
            padding:9px 14px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.2);
            font:14px system-ui;cursor:pointer">🛰️ Satellite</button>
-  <div id="legend" style="position:absolute;bottom:74px;left:14px;z-index:1;background:#fff;
+  <div id="legend" style="position:absolute;top:64px;left:14px;z-index:1;background:#fff;
        padding:8px 12px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.18);font:12px system-ui">
     <div style="font-weight:600;margin-bottom:4px">Statut des parcelles</div>
-    <div><span style="display:inline-block;width:12px;height:12px;background:#3b82f6;border-radius:2px;margin-right:6px"></span>Tracée (en vérification)</div>
+    <div><span style="display:inline-block;width:12px;height:12px;background:#6b7280;border-radius:2px;margin-right:6px"></span>Tracée (non vérifiée)</div>
     <div><span style="display:inline-block;width:12px;height:12px;background:#22c55e;border-radius:2px;margin-right:6px"></span>Validée</div>
     <div><span style="display:inline-block;width:12px;height:12px;background:#ef4444;border-radius:2px;margin-right:6px"></span>En litige</div>
+    <div><span style="display:inline-block;width:12px;height:12px;background:#15803d;opacity:.5;border-radius:2px;margin-right:6px"></span>Domaine de l'État</div>
   </div>
   <div id="reportModal" style="display:none;position:fixed;inset:0;z-index:5;background:rgba(0,0,0,.45);align-items:center;justify-content:center">
     <div style="background:#fff;padding:22px;border-radius:12px;width:360px;max-width:92%;font-family:system-ui;max-height:90vh;overflow:auto">
@@ -329,6 +345,71 @@
     // Recentre la carte après ouverture/fermeture d'une feuille.
     function rafraichirCarte() { setTimeout(() => { if (map) map.resize(); }, 250); }
 
+    // ---------------- Recherche intelligente ----------------
+    // Ordre : référence de terrain et région (notre base) → puis ville (MapTiler).
+    const STATUT_TXT = { verifying: "En vérification", validated: "Validée", disputed: "En litige" };
+
+    function afficherResultats(html) {
+      const box = document.getElementById("search-results");
+      box.innerHTML = html;
+      box.style.display = html ? "block" : "none";
+    }
+    function fermerResultats() { document.getElementById("search-results").style.display = "none"; }
+
+    function allerA(lon, lat, zoom) {
+      map.flyTo({ center: [lon, lat], zoom: zoom || 16 });
+      fermerResultats();
+    }
+
+    async function lancerRecherche() {
+      const q = document.getElementById("search-input").value.trim();
+      if (q.length < 2) { afficherResultats(""); return; }
+      afficherResultats(`<div style="padding:12px;color:#6b7280;font-size:13px">Recherche…</div>`);
+
+      let html = "";
+      // 1) Référence de terrain + région, depuis notre base.
+      try {
+        const res = await fetch(`${API}recherche/?q=${encodeURIComponent(q)}`);
+        if (res.ok) {
+          const d = await res.json();
+          if (d.region) {
+            html += `<div class="res-item" onclick="allerA(${d.region.lon},${d.region.lat},9)"
+              style="padding:11px 14px;border-bottom:1px solid #f0f0f0;cursor:pointer">
+              📍 <b>Région ${d.region.nom}</b><div style="font-size:12px;color:#6b7280">Centrer sur la région</div></div>`;
+          }
+          (d.parcelles || []).forEach(p => {
+            html += `<div class="res-item" onclick="allerA(${p.lon},${p.lat},17)"
+              style="padding:11px 14px;border-bottom:1px solid #f0f0f0;cursor:pointer">
+              🗺️ <b>${p.reference}</b>
+              <div style="font-size:12px;color:#6b7280">${STATUT_TXT[p.status] || p.status}</div></div>`;
+          });
+        }
+      } catch (e) { /* on tentera la ville */ }
+
+      // 2) Ville / lieu, via le géocodage MapTiler (si une clé est configurée).
+      const cle = window.MAPTILER_KEY;
+      if (cle && cle !== "COLLE_TA_CLE_ICI") {
+        try {
+          const url = `https://api.maptiler.com/geocoding/${encodeURIComponent(q)}.json`
+            + `?key=${cle}&country=tg&limit=5`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const g = await res.json();
+            (g.features || []).forEach(f => {
+              const [lon, lat] = f.center;
+              html += `<div class="res-item" onclick="allerA(${lon},${lat},13)"
+                style="padding:11px 14px;border-bottom:1px solid #f0f0f0;cursor:pointer">
+                🏙️ ${f.place_name || f.text}</div>`;
+            });
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      afficherResultats(html ||
+        `<div style="padding:12px;color:#6b7280;font-size:13px">Aucun résultat pour « ${q} ».</div>`);
+    }
+
+
     let map = null;
     map = new maplibregl.Map({
       container: "map",
@@ -359,20 +440,84 @@
 
     // Les couches de parcelles doivent être recréées à chaque changement de
     // fond de carte (MapLibre les efface quand on change de style).
+    // Charge et affiche les zones de l'État (forêts classées, réserves…).
+    async function chargerZonesEtat() {
+      if (map.getSource("zones-etat")) return;
+      try {
+        const res = await fetch(`${API}zones_etat/`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.features.length) return;
+        map.addSource("zones-etat", { type: "geojson", data });
+        map.addLayer({
+          id: "zones-etat-fill", type: "fill", source: "zones-etat",
+          paint: { "fill-color": "#15803d", "fill-opacity": 0.25 }
+        });
+        map.addLayer({
+          id: "zones-etat-line", type: "line", source: "zones-etat",
+          paint: { "line-color": "#15803d", "line-width": 1.5, "line-dasharray": [3, 2] }
+        });
+        // Info-bulle au clic sur une zone.
+        map.on("click", "zones-etat-fill", (e) => {
+          const p = e.features[0].properties;
+          new maplibregl.Popup({ maxWidth: "260px" }).setLngLat(e.lngLat).setHTML(
+            `<div style="font-family:system-ui;font-size:13px">
+               <b>${p.name}</b><br>
+               <span style="color:#15803d">${p.type_display}</span><br>
+               <span style="color:#6b7280;font-size:11px">Domaine de l'État — non constructible sans autorisation</span>
+             </div>`).addTo(map);
+        });
+      } catch (e) { /* silencieux : la carte fonctionne sans ces zones */ }
+    }
+
     function addParcelLayers() {
       if (map.getSource("parcelles")) return;
+      // Zones de l'État (forêts classées…) : couche de référence, en dessous des parcelles.
+      chargerZonesEtat();
       map.addSource("parcelles", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({ id: "parcelles-fill", type: "fill", source: "parcelles",
         paint: { "fill-color": ["match", ["get", "status"],
-          "verifying", "#3b82f6",
+          "verifying", "#6b7280",
           "validated", "#22c55e",
           "disputed", "#ef4444",
-          "#3b82f6"], "fill-opacity": 0.45 } });
+          "#6b7280"], "fill-opacity": 0.45 } });
       map.addLayer({ id: "parcelles-line", type: "line", source: "parcelles", paint: { "line-color": "#fff", "line-width": 1.5 } });
       loadParcelles();
     }
 
     map.on("load", addParcelLayers);
+
+    // Ouverture via QR code / lien direct : centrer sur la parcelle et l'afficher.
+    map.on("load", () => {
+      const params = new URLSearchParams(location.search);
+      const pid = params.get("parcelle");
+      const lat = parseFloat(params.get("lat"));
+      const lon = parseFloat(params.get("lon"));
+      if (!isNaN(lat) && !isNaN(lon)) {
+        map.flyTo({ center: [lon, lat], zoom: 17 });
+      }
+      if (pid) {
+        // Attendre que les parcelles soient chargées, puis ouvrir la fiche.
+        setTimeout(() => ouvrirFicheParcelle(pid), 1500);
+      }
+    });
+
+    // Ouvre la fiche publique d'une parcelle par son id (depuis un lien/QR).
+    async function ouvrirFicheParcelle(pid) {
+      try {
+        const res = await fetch(`${API}${pid}/`);
+        if (!res.ok) return;
+        const f = await res.json();
+        if (f.geometry && f.geometry.coordinates) {
+          // Centre sur le barycentre approximatif du polygone.
+          const ring = f.geometry.coordinates[0];
+          const lons = ring.map(c => c[0]), lats = ring.map(c => c[1]);
+          const cx = lons.reduce((a, b) => a + b, 0) / lons.length;
+          const cy = lats.reduce((a, b) => a + b, 0) / lats.length;
+          showParcelInfo(f, { lng: cx, lat: cy });
+        }
+      } catch (e) { /* silencieux */ }
+    }
 
     // ---- Bascule plan / satellite ----
     const STYLE_PLAN = window.STYLE_PLAN;
@@ -535,7 +680,10 @@
           ? `Cette localisation venait d'être enregistrée. Référence : ${ref}.`
           : `Localisation enregistrée. Référence : ${ref}.`;
         if (d.already_registered_zone) txt += "\n⚠️ Cette zone fait déjà l'objet d'une parcelle enregistrée.";
-        setMsg(txt, d.already_registered_zone ? "warn" : "ok");
+        if (d.zone_etat) {
+          txt += `\n🌳 ATTENTION : cette localisation est dans un domaine de l'État (${d.zone_etat.type} : ${d.zone_etat.nom}). Une parcelle privée y est très probablement irrecevable.`;
+        }
+        setMsg(txt, (d.already_registered_zone || d.zone_etat) ? "warn" : "ok");
         showDocsPanel();
         clearMarker();
       } catch (e) { setMsg("Erreur réseau : " + e, "warn"); }

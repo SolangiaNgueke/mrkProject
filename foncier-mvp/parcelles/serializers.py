@@ -117,13 +117,19 @@ class ParcelleMineSerializer(serializers.ModelSerializer):
 
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     reliability_display = serializers.CharField(source="get_reliability_display", read_only=True)
+    a_un_certificat = serializers.SerializerMethodField()
 
     class Meta:
         model = Parcelle
         fields = [
             "id", "reference", "status", "status_display",
             "reliability", "reliability_display", "surface_m2", "created_at",
+            "a_un_certificat",
         ]
+
+    def get_a_un_certificat(self, obj):
+        # Le certificat est généré à la volée pour toute parcelle validée.
+        return obj.status == Parcelle.Status.VALIDATED
 
 
 class ParcelleFileAttenteSerializer(serializers.ModelSerializer):

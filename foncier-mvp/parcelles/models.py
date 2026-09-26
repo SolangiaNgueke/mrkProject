@@ -314,3 +314,33 @@ class AuditLog(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValueError("Le journal d'audit est inaltérable : suppression interdite.")
+
+
+class ZoneEtat(models.Model):
+    """Zone appartenant à l'État (forêt classée, réserve, domaine public…).
+
+    Couche de RÉFÉRENCE : ces zones ne passent pas par le workflow
+    citoyen→géomètre→notaire. Elles sont importées une fois (fichier .txt de
+    coordonnées ou GeoJSON), affichées en permanence sur la carte, et servent à
+    ALERTER quand une parcelle est déclarée à l'intérieur.
+    """
+
+    class Type(models.TextChoices):
+        FORET = "foret", "Forêt classée"
+        RESERVE = "reserve", "Réserve / aire protégée"
+        DOMAINE = "domaine", "Domaine public"
+        PLAN_VILLE = "plan_ville", "Plan de ville"
+        AUTRE = "autre", "Autre zone de l'État"
+
+    name = models.CharField(max_length=150)
+    type_zone = models.CharField(max_length=20, choices=Type.choices, default=Type.FORET)
+    geometry = gis_models.MultiPolygonField(srid=4326)  # WGS84 (lon/lat)
+    source = models.CharField(max_length=200, blank=True)  # fichier d'origine
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Zone de l'État"
+        verbose_name_plural = "Zones de l'État"
+
+    def __str__(self):
+        return f"{self.get_type_zone_display()} — {self.name}"

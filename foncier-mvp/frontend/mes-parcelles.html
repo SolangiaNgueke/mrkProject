@@ -49,7 +49,7 @@
       <div id="msg" class="msg">Chargement…</div>
       <table id="tbl" style="display:none">
         <thead>
-          <tr><th>Référence</th><th>Statut</th><th>Fiabilité</th><th>Dimension</th><th>Déclarée le</th><th>Documents</th></tr>
+          <tr><th>Référence</th><th>Statut</th><th>Fiabilité</th><th>Dimension</th><th>Déclarée le</th><th>Documents</th><th>Certificat</th></tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>
@@ -63,8 +63,8 @@
     const token = localStorage.getItem("foncier_token");
 
     const STATUT_COLORS = {
-      draft: "#9ca3af", submitted: "#f59e0b", verifying: "#3b82f6",
-      validated: "#22c55e", rejected: "#6b7280", disputed: "#ef4444"
+      draft: "#9ca3af", submitted: "#f59e0b", verifying: "#6b7280",
+      validated: "#22c55e", rejected: "#991b1b", disputed: "#ef4444"
     };
 
     function setMsg(t, err) {
@@ -99,12 +99,35 @@
           <td data-label="Fiabilité">${p.reliability_display}</td>
           <td data-label="Dimension">${fmtSurface(p.surface_m2)}</td>
           <td data-label="Déclarée le">${fmtDate(p.created_at)}</td>
-          <td data-label="Documents"><a class="doc-link" href="documents.html?parcelle=${p.id}">Gérer les documents →</a></td>
+          <td data-label="Documents"><a class="doc-link" href="documents.html?parcelle=${p.id}">Gérer les documents →</a>${
+            p.a_un_certificat ? `<br><a class="doc-link" href="#" onclick="telechargerCertificat(${p.id},'${p.reference || p.id}');return false;" style="color:#15803d">📄 Certificat de vérification</a>` : ""
+          }</td>
+          <td data-label="Certificat">${p.a_un_certificat
+            ? `<a class="doc-link" href="#" onclick="telechargerCertificat(${p.id});return false;">📄 Télécharger</a>`
+            : '<span style="color:#9ca3af">—</span>'}</td>
         </tr>`;
       }).join("");
 
       document.getElementById("msg").style.display = "none";
       document.getElementById("tbl").style.display = "table";
+    }
+
+    async function telechargerCertificat(id, ref) {
+      try {
+        const res = await fetch(`${API}${id}/certificat/`, { headers: { "Authorization": "Token " + token } });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          alert(d.detail || "Certificat indisponible.");
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `certificat_${ref}.pdf`;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) { alert("Erreur réseau : " + e); }
     }
 
     load();

@@ -61,26 +61,26 @@
     </div>
 
     <div class="card" id="formCard">
-      <h2>Pré-remplir depuis un plan (OCR)</h2>
-      <p class="hint">Choisissez <b>un document déjà fourni par le propriétaire</b> pour le
-        lire automatiquement — c'est plus sûr que de re-téléverser un fichier.
-        <b>Vérifiez et corrigez toujours</b> ce que l'OCR a lu.</p>
+      <h2>Pré-remplir les points (plan ou fichier de coordonnées)</h2>
+      <p class="hint">Choisissez <b>un document déjà fourni par le propriétaire</b>, ou
+        téléversez un fichier : <b>image, PDF ou .txt de coordonnées</b>. Le type est
+        reconnu automatiquement. <b>Vérifiez et corrigez toujours</b> avant de calculer.</p>
 
       <!-- Choix d'un document du dossier -->
       <label style="font-size:13px;color:#555">Document du dossier</label>
       <select id="doc-select" style="width:100%;padding:8px;margin:4px 0 8px">
         <option value="">— Chargement… —</option>
       </select>
-      <button class="btn-ghost" onclick="actionProtegee(this, ocrFromDoc)">Lire ce document (OCR)</button>
+      <button class="btn-ghost" onclick="actionProtegee(this, ocrFromDoc)">Lire ce document</button>
 
-      <!-- Secours : téléverser depuis l'ordinateur -->
-      <details style="margin-top:12px">
-        <summary style="cursor:pointer;font-size:13px;color:#6b7280">
-          Le bon document n'est pas dans le dossier ? Téléverser un fichier (secours)</summary>
-        <p class="hint" style="margin-top:8px">À n'utiliser que si le propriétaire n'a pas fourni le plan.</p>
-        <input id="plan-file" type="file" accept="image/*,.pdf,application/pdf" />
-        <button class="btn-ghost" onclick="actionProtegee(this, runOcr)">Lire le fichier (OCR)</button>
-      </details>
+      <!-- Téléverser un fichier : image, PDF ou .txt -->
+      <div style="margin-top:14px">
+        <label style="font-size:13px;color:#555">Ou téléverser un fichier (image, PDF ou .txt)</label>
+        <input id="plan-file" type="file"
+               accept="image/*,.pdf,application/pdf,.txt,.csv,.dat,text/plain"
+               style="display:block;margin:6px 0 8px" />
+        <button class="btn-ghost" onclick="actionProtegee(this, runOcr)">Lire le fichier</button>
+      </div>
       <div id="ocr-msg" class="hint"></div>
 
       <h2 style="margin-top:20px;">Système de coordonnées</h2>
@@ -110,9 +110,20 @@
       <h2>Aperçu du tracé reprojeté</h2>
       <div id="result" class="hint">Le tracé apparaîtra ici après calcul.</div>
       <div id="map"></div>
-      <button id="basemap-btn" onclick="toggleBasemap()"
-        style="margin-top:8px;padding:7px 12px;border:0;border-radius:7px;
-               background:#eef;color:#2563eb;font-size:13px;cursor:pointer">🛰️ Satellite</button>
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+        <button id="basemap-btn" onclick="toggleBasemap()"
+          style="padding:7px 12px;border:0;border-radius:7px;background:#eef;color:#2563eb;font-size:13px;cursor:pointer">🛰️ Satellite</button>
+        <button id="btn-draw" onclick="toggleDessin()"
+          style="padding:7px 12px;border:0;border-radius:7px;background:#eef;color:#2563eb;font-size:13px;cursor:pointer">✏️ Dessiner à main levée</button>
+      </div>
+      <div id="draw-help" class="hint" style="display:none;margin-top:8px;color:#2563eb">
+        Cliquez sur la carte pour poser chaque sommet. Il en faut au moins 3.
+        <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-ghost" onclick="annulerDernierSommet()">↩︎ Annuler le dernier point</button>
+          <button class="btn-ghost" onclick="effacerDessin()">Tout effacer</button>
+          <button class="btn-primary" onclick="actionProtegee(this, validerDessin)">Valider ce tracé</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -254,6 +265,12 @@
         style: STYLE_PLAN,
         center: [1.2, 6.13], zoom: 14
       });
+      // En mode dessin, chaque clic ajoute un sommet au tracé à main levée.
+      map.on("click", (e) => {
+        if (!modeDessin) return;
+        sommets.push([e.lngLat.lng, e.lngLat.lat]);
+        dessinerProvisoire();
+      });
     }
 
     function toggleBasemap() {
@@ -279,7 +296,82 @@
       map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 40 });
     }
 
-    // --- OCR : lit le plan et pré-remplit le tableau ---
+    // ---------------- Tracé à main levée ----------------
+    let modeDessin = false;
+    let sommets = [];   // [[lon,lat], ...]
+
+    function toggleDessin() {
+      modeDessin = !modeDessin;
+      document.getElementById("draw-help").style.display = modeDessin ? "block" : "none";
+      document.getElementById("btn-draw").style.background = modeDessin ? "#dbeafe" : "#eef";
+      map.getCanvas().style.cursor = modeDessin ? "crosshair" : "";
+      if (!modeDessin) return;
+      effacerDessin();
+      setMsg("Mode dessin : cliquez sur la carte pour poser les sommets.", "ok");
+    }
+
+    function dessinerProvisoire() {
+      const fc = {
+        type: "FeatureCollection",
+        features: sommets.length >= 3 ? [{
+          type: "Feature",
+          geometry: { type: "Polygon", coordinates: [[...sommets, sommets[0]]] },
+          properties: {}
+        }] : []
+      };
+      const pts = {
+        type: "FeatureCollection",
+        features: sommets.map(s => ({ type: "Feature", geometry: { type: "Point", coordinates: s }, properties: {} }))
+      };
+      if (map.getSource("draw-poly")) { map.getSource("draw-poly").setData(fc); }
+      else {
+        map.addSource("draw-poly", { type: "geojson", data: fc });
+        map.addLayer({ id: "draw-fill", type: "fill", source: "draw-poly",
+          paint: { "fill-color": "#6b7280", "fill-opacity": .4 } });
+        map.addLayer({ id: "draw-line", type: "line", source: "draw-poly",
+          paint: { "line-color": "#fff", "line-width": 2 } });
+      }
+      if (map.getSource("draw-pts")) { map.getSource("draw-pts").setData(pts); }
+      else {
+        map.addSource("draw-pts", { type: "geojson", data: pts });
+        map.addLayer({ id: "draw-pts-c", type: "circle", source: "draw-pts",
+          paint: { "circle-radius": 5, "circle-color": "#2563eb", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
+      }
+    }
+
+    function annulerDernierSommet() { sommets.pop(); dessinerProvisoire(); }
+    function effacerDessin() { sommets = []; dessinerProvisoire(); }
+
+    async function validerDessin() {
+      if (sommets.length < 3) { setMsg("Posez au moins 3 sommets.", "warn"); return; }
+      if (!confirm("Valider ce tracé à main levée ?\nLa parcelle deviendra visible (grise, non vérifiée) et une détection de conflit sera lancée.")) return;
+      try {
+        const res = await fetch(`${API}${parcelId}/delimitation_freehand/`, {
+          method: "POST", headers: authHeaders(),
+          body: JSON.stringify({ ring: sommets })
+        });
+        const d = await res.json();
+        if (!res.ok) { setMsg("Erreur : " + (d.detail || JSON.stringify(d)), "warn"); return; }
+        if (d.overlap_count && d.overlap_count > 0) {
+          setMsg(`Tracé enregistré. ⚠️ Chevauchement avec ${d.overlap_count} parcelle(s) — mis en litige.`, "warn");
+        } else {
+          setMsg("Tracé à main levée enregistré. Parcelle visible (non vérifiée).", "ok");
+        }
+        document.getElementById("result").innerHTML =
+          `Enregistré — surface ≈ <b>${Math.round(d.surface_m2)} m²</b> (${(d.surface_m2/10000).toFixed(2)} ha).`;
+        modeDessin = false;
+        document.getElementById("draw-help").style.display = "none";
+        document.getElementById("btn-draw").style.background = "#eef";
+        map.getCanvas().style.cursor = "";
+        ["draw-fill","draw-line","draw-pts-c"].forEach(l => { if (map.getLayer(l)) map.removeLayer(l); });
+        ["draw-poly","draw-pts"].forEach(sc => { if (map.getSource(sc)) map.removeSource(sc); });
+        showOnMap(d.geometry);
+      } catch (e) { setMsg("Erreur réseau : " + e, "warn"); }
+    }
+
+
+    // --- Import d'un fichier .txt de coordonnées ---
+    // --- Remplit le tableau des points ---
     function fillTable(points) {
       document.getElementById("pts-body").innerHTML = "";
       points.forEach((p, i) => addRow(p.name || ("B" + (i + 1)), p.x ?? "", p.y ?? ""));
@@ -289,8 +381,8 @@
     async function runOcr() {
       const fileInput = document.getElementById("plan-file");
       const el = document.getElementById("ocr-msg");
-      if (!fileInput.files.length) { el.textContent = "Choisissez d'abord une image du plan."; el.className = "warn"; return; }
-      el.textContent = "Lecture en cours…"; el.className = "hint";
+      if (!fileInput.files.length) { el.textContent = "Choisissez d'abord un fichier (image, PDF ou .txt)."; el.className = "warn"; return; }
+      el.textContent = "Lecture du fichier en cours…"; el.className = "hint";
       const fd = new FormData();
       fd.append("file", fileInput.files[0]);
       const headers = {};
@@ -298,14 +390,17 @@
       try {
         const res = await fetch(`${API}${parcelId}/ocr_plan/`, { method: "POST", headers, body: fd });
         const d = await res.json();
-        if (!res.ok) { el.textContent = "OCR : " + (d.detail || "erreur"); el.className = "warn"; return; }
+        if (!res.ok) { el.textContent = "Lecture : " + (d.detail || "erreur"); el.className = "warn"; return; }
         if (d.count === 0) {
-          el.textContent = "Aucun point détecté automatiquement — saisissez-les à la main.";
+          el.textContent = d.source === "txt"
+            ? "Aucune coordonnée reconnue dans ce fichier."
+            : "Aucun point détecté automatiquement — saisissez-les à la main.";
           el.className = "warn";
           return;
         }
         fillTable(d.points);
-        el.innerHTML = `<span class="ok">${d.count} point(s) détecté(s).</span> Vérifiez et corrigez avant de calculer.`;
+        const mot = d.source === "txt" ? "importé(s)" : "détecté(s)";
+        el.innerHTML = `<span class="ok">${d.count} point(s) ${mot}.</span> Vérifiez et corrigez avant de calculer.`;
       } catch (e) { el.textContent = "Erreur réseau : " + e; el.className = "warn"; }
     }
 

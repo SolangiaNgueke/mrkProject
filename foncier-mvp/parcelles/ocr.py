@@ -313,3 +313,60 @@ def extract_boundary_points(image_bytes):
     if engine == "vision":
         return _ocr_google_vision(image_bytes)
     return _ocr_tesseract(image_bytes)
+
+
+# --------------------------------------------------------------------- #
+#  Import de fichiers texte de coordonnées                              #
+# --------------------------------------------------------------------- #
+
+def parse_coordonnees_texte(contenu):
+    """Extrait les points de bornage d'un fichier .txt de coordonnées.
+
+    Gère plusieurs présentations courantes :
+      - « X=308822.70  Y=756828.50  Z=0.00 » (Z ignoré), plusieurs par ligne
+      - « Nom  X  Y » ou « X  Y » séparés par espaces, virgules, tabulations
+        ou points-virgules
+
+    Retourne une liste de points {name, x, y}. Tolérant aux espaces et aux
+    lignes de commentaire (# ...).
+    """
+    import re
+
+    texte = contenu.decode("utf-8", errors="ignore") if isinstance(contenu, bytes) else contenu
+
+    # 1) Format explicite X=.. Y=.. (le plus fiable) — Z optionnel et ignoré.
+    motif_xy = re.compile(
+        r"X\s*=\s*(-?\d+(?:\.\d+)?)\s*Y\s*=\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE
+    )
+    trouves = motif_xy.findall(texte)
+    if trouves:
+        return [
+            {"name": f"P{i}", "x": float(x), "y": float(y)}
+            for i, (x, y) in enumerate(trouves, 1)
+        ]
+
+    # 2) Format tabulaire : une ligne = un point, avec un nom optionnel.
+    points = []
+    for ligne in texte.splitlines():
+        ligne = ligne.strip()
+        if not ligne or ligne.startswith("#") or ligne.startswith("//"):
+            continue
+        # Découpe sur virgule, point-virgule, tabulation ou espaces.
+        champs = [c for c in re.split(r"[;,\t ]+", ligne) if c]
+        # Convertit une éventuelle virgule décimale (ex. "6,13" -> "6.13") APRÈS
+        # le découpage, pour ne pas confondre séparateur et décimale.
+        def _num(c):
+            return c if re.fullmatch(r"-?\d+(?:\.\d+)?", c) else None
+        nombres, nom = [], None
+        for c in champs:
+            n = _num(c)
+            if n is not None:
+                nombres.append(float(n))
+            elif nom is None:
+                nom = c
+        if len(nombres) >= 2:
+            points.append({
+                "name": nom or f"P{len(points) + 1}",
+                "x": nombres[0], "y": nombres[1],
+            })
+    return points

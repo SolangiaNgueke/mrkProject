@@ -60,7 +60,11 @@
 <body>
   <header>
     <h1>Espace géomètre — parcelles à tracer</h1>
-    <div><a href="index.html">← Carte publique</a></div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button onclick="nouveauTrace()" style="background:#22c55e;color:#fff;border:0;
+        padding:8px 14px;border-radius:8px;font-size:14px;cursor:pointer">➕ Nouveau tracé</button>
+      <a href="index.html">← Carte publique</a>
+    </div>
   </header>
 
   <div class="wrap">
@@ -96,7 +100,7 @@
     let parcelles = [];
     let filtreActif = "tous";
 
-    const COULEURS = { submitted: "#f59e0b", verifying: "#3b82f6" };
+    const COULEURS = { submitted: "#f59e0b", verifying: "#6b7280" };
 
     function setMsg(t, err) {
       const m = document.getElementById("msg");
@@ -163,6 +167,21 @@
       }).join("");
 
       document.getElementById("vide").style.display = liste.length ? "none" : "block";
+    }
+
+    // Crée une parcelle vierge et ouvre directement l'outil de tracé dessus.
+    async function nouveauTrace() {
+      if (!confirm("Créer un nouveau tracé autonome ?\nUne parcelle vierge sera créée et vous pourrez la tracer directement.")) return;
+      try {
+        const res = await fetch(API + "nouveau_trace/", {
+          method: "POST",
+          headers: { "Authorization": "Token " + token, "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+        const d = await res.json();
+        if (!res.ok) { alert(d.detail || "Création impossible."); return; }
+        window.location.href = `delimitation.html?parcelle=${d.id}`;
+      } catch (e) { alert("Erreur réseau : " + e); }
     }
 
     charger();

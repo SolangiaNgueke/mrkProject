@@ -9,7 +9,7 @@ casse l'une de ces règles, le test échoue AVANT le déploiement.
 """
 
 from django.contrib.auth import get_user_model
-from django.contrib.gis.geos import Point, Polygon
+from django.contrib.gis.geos import GEOSGeometry, Point, Polygon
 from django.urls import reverse
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
@@ -259,4 +259,195 @@ class OcrDossierTests(BaseData):
         _auth(self.client, self.citoyen)
         r = self.client.post(f"/api/parcelles/{self.parcelle.id}/ocr_document/",
                              {"document_id": self.titre.id}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+
+class TraceMainLeveeTests(BaseData):
+    """Tracé à main levée : autonome, réservé au géomètre, passe en 'non vérifié'."""
+
+    def setUp(self):
+        super().setUp()
+        self.parcelle = Parcelle.objects.create(
+            owner=self.citoyen, declared_location=Point(1.2, 6.1),
+            status=Parcelle.Status.SUBMITTED,
+        )
+        self.ring = [[1.20, 6.10], [1.20, 6.11], [1.21, 6.11], [1.21, 6.10]]
+
+    def test_main_levee_reservee_au_geometre(self):
+        _auth(self.client, self.citoyen)
+        r = self.client.post(f"/api/parcelles/{self.parcelle.id}/delimitation_freehand/",
+                             {"ring": self.ring}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_main_levee_cree_le_trace(self):
+        _auth(self.client, self.geometre)
+        r = self.client.post(f"/api/parcelles/{self.parcelle.id}/delimitation_freehand/",
+                             {"ring": self.ring}, format="json")
+        self.assertEqual(r.status_code, 201)
+        self.parcelle.refresh_from_db()
+        self.assertIsNotNone(self.parcelle.geometry)
+        self.assertEqual(self.parcelle.status, Parcelle.Status.VERIFYING)  # tracé = non vérifié
+
+    def test_main_levee_exige_trois_sommets(self):
+        _auth(self.client, self.geometre)
+        r = self.client.post(f"/api/parcelles/{self.parcelle.id}/delimitation_freehand/",
+                             {"ring": [[1.2, 6.1], [1.2, 6.11]]}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+
+class ImportTxtTests(BaseData):
+    """Import d'un fichier .txt de coordonnées (réservé au géomètre)."""
+
+    def setUp(self):
+        super().setUp()
+        self.parcelle = Parcelle.objects.create(
+            owner=self.citoyen, declared_location=Point(1.2, 6.1),
+            status=Parcelle.Status.SUBMITTED,
+        )
+
+    def _fichier(self, contenu):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile("coords.txt", contenu.encode(), content_type="text/plain")
+
+    def test_import_txt_reserve_au_geometre(self):
+        _auth(self.client, self.citoyen)
+        f = self._fichier("X=308822.70 Y=756828.50 Z=0")
+        r = self.client.post(f"/api/parcelles/{self.parcelle.id}/import_txt/",
+                             {"file": f}, format="multipart")
+        self.assertEqual(r.status_code, 403)
+
+    def test_import_txt_format_xyz(self):
+        _auth(self.client, self.geometre)
+        contenu = ("X=308822.7053  Y=756828.5067  Z=0.0000 "
+                   "X=310133.8235  Y=747714.9881  Z=0.0000")
+        f = self._fichier(contenu)
+        r = self.client.post(f"/api/parcelles/{self.parcelle.id}/import_txt/",
+                             {"file": f}, format="multipart")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["count"], 2)
+        self.assertAlmostEqual(r.data["points"][0]["x"], 308822.7053, places=3)
+
+    def test_import_txt_format_colonnes(self):
+        _auth(self.client, self.geometre)
+        contenu = "B1,296167.00,697106.00\nB2,296173.30,697101.27\nB3,296166.00,697088.00"
+        f = self._fichier(contenu)
+        r = self.client.post(f"/api/parcelles/{self.parcelle.id}/import_txt/",
+                             {"file": f}, format="multipart")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["count"], 3)
+
+
+class ZoneEtatTests(BaseData):
+    """Zones de l'État : couche publique + alerte à la déclaration."""
+
+    def setUp(self):
+        super().setUp()
+        from parcelles.models import ZoneEtat
+        # Un carré autour de (1.20, 6.10) en WGS84.
+        poly = "MULTIPOLYGON(((1.19 6.09, 1.19 6.12, 1.22 6.12, 1.22 6.09, 1.19 6.09)))"
+        ZoneEtat.objects.create(name="Forêt test", type_zone="foret",
+                                geometry=GEOSGeometry(poly, srid=4326))
+
+    def test_zones_etat_publiques(self):
+        r = self.client.get("/api/parcelles/zones_etat/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.data["features"]), 1)
+
+    def test_alerte_declaration_dans_zone_etat(self):
+        _auth(self.client, self.citoyen)
+        # Point à l'intérieur de la forêt test.
+        r = self.client.post("/api/parcelles/", _point_feature(1.205, 6.105), format="json")
+        self.assertEqual(r.status_code, 201)
+        self.assertIn("zone_etat", r.data)
+        self.assertEqual(r.data["zone_etat"]["nom"], "Forêt test")
+
+    def test_pas_d_alerte_hors_zone(self):
+        _auth(self.client, self.citoyen)
+        r = self.client.post("/api/parcelles/", _point_feature(1.50, 6.50), format="json")
+        self.assertEqual(r.status_code, 201)
+        self.assertNotIn("zone_etat", r.data)
+
+
+class NouveauTraceTests(BaseData):
+    """Tracé autonome : le géomètre crée une parcelle vierge à tracer."""
+
+    def test_nouveau_trace_reserve_au_geometre(self):
+        _auth(self.client, self.citoyen)
+        r = self.client.post("/api/parcelles/nouveau_trace/", {}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_nouveau_trace_cree_parcelle_vierge(self):
+        _auth(self.client, self.geometre)
+        r = self.client.post("/api/parcelles/nouveau_trace/",
+                             {"lon": 1.2, "lat": 6.13}, format="json")
+        self.assertEqual(r.status_code, 201)
+        self.assertTrue(r.data["reference"].startswith("TG-"))
+        p = Parcelle.objects.get(pk=r.data["id"])
+        self.assertEqual(p.owner, self.geometre)
+
+
+class OcrUnifieTests(BaseData):
+    """L'endpoint OCR accepte aussi les fichiers .txt de coordonnées."""
+
+    def setUp(self):
+        super().setUp()
+        self.parcelle = Parcelle.objects.create(
+            owner=self.citoyen, declared_location=Point(1.2, 6.1),
+            status=Parcelle.Status.SUBMITTED,
+        )
+
+    def test_ocr_plan_lit_un_txt(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        contenu = ("X=308822.7053  Y=756828.5067  Z=0 "
+                   "X=310133.8235  Y=747714.9881  Z=0").encode()
+        f = SimpleUploadedFile("coords.txt", contenu, content_type="text/plain")
+        _auth(self.client, self.geometre)
+        r = self.client.post(f"/api/parcelles/{self.parcelle.id}/ocr_plan/",
+                             {"file": f}, format="multipart")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["count"], 2)
+        self.assertEqual(r.data["source"], "txt")
+
+
+class CertificatTests(BaseData):
+    """Certificat PDF : réservé aux parcelles validées, propriétaire ou admin."""
+
+    def _parcelle_validee(self):
+        from parcelles.models import Delimitation, VerificationDossier
+        poly = Polygon(((1.2, 6.1), (1.2, 6.11), (1.21, 6.11), (1.21, 6.1), (1.2, 6.1)))
+        p = Parcelle.objects.create(
+            owner=self.citoyen, declared_location=Point(1.2, 6.1),
+            geometry=poly, surface_m2=12000,
+        )
+        Delimitation.objects.create(parcelle=p, surveyor=self.geometre,
+                                    validated_geometry=poly, source_epsg=32631)
+        # Décision notaire APPROUVÉE -> le signal fait passer la parcelle en validée.
+        VerificationDossier.objects.create(
+            parcelle=p, decision=VerificationDossier.Decision.APPROVED,
+        )
+        p.refresh_from_db()
+        return p
+
+    def test_certificat_pour_parcelle_validee(self):
+        p = self._parcelle_validee()
+        _auth(self.client, self.citoyen)
+        r = self.client.get(f"/api/parcelles/{p.id}/certificat/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        self.assertIn(p.reference, r["Content-Disposition"])
+        self.assertTrue(r.content[:4] == b"%PDF")
+
+    def test_certificat_refuse_si_non_validee(self):
+        p = Parcelle.objects.create(
+            owner=self.citoyen, declared_location=Point(1.2, 6.1),
+            status=Parcelle.Status.SUBMITTED,
+        )
+        _auth(self.client, self.citoyen)
+        r = self.client.get(f"/api/parcelles/{p.id}/certificat/")
+        self.assertEqual(r.status_code, 400)
+
+    def test_certificat_refuse_a_un_tiers(self):
+        p = self._parcelle_validee()
+        _auth(self.client, self.autre_citoyen)
+        r = self.client.get(f"/api/parcelles/{p.id}/certificat/")
         self.assertEqual(r.status_code, 403)

@@ -13,6 +13,7 @@ from .models import (
     Parcelle,
     Signalement,
     VerificationDossier,
+    ZoneEtat,
 )
 
 Role = get_user_model().Role
@@ -222,4 +223,16 @@ class AuditLogAdmin(admin.ModelAdmin):
     def resume(self, obj):
         if not obj.details:
             return "—"
-        return ", ".join(f"{k} : {v}" for k, v in list(obj.details.items())[:3]) 
+        return ", ".join(f"{k} : {v}" for k, v in list(obj.details.items())[:3])
+
+
+@admin.register(ZoneEtat)
+class ZoneEtatAdmin(admin.ModelAdmin):
+    """Zones de l'État (forêts classées, réserves…) — couche de référence."""
+
+    list_display = ("name", "type_zone", "source", "created_at")
+    list_filter = ("type_zone",)
+    search_fields = ("name",)
+
+    def has_module_permission(self, request):
+        return request.user.is_superuser or _role(request.user) == Role.ADMIN
