@@ -331,7 +331,14 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         if not self._can_read_doc(request.user, parcelle, doc):
             return Response({"detail": "Accès refusé."}, status=status.HTTP_403_FORBIDDEN)
         filename = doc.file.name.split("/")[-1]
-        return FileResponse(doc.file.open("rb"), as_attachment=True, filename=filename)
+        try:
+            handle = doc.file.open("rb")
+        except FileNotFoundError:
+            return Response(
+                {"detail": "Fichier introuvable sur le serveur (perdu lors d'une maintenance)."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return FileResponse(handle, as_attachment=True, filename=filename)
 
     @action(
         detail=True,
@@ -729,6 +736,13 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         try:
             with doc.file.open("rb") as f:
                 points = extract_boundary_points(f.read())
+        except FileNotFoundError:
+            return Response(
+                {"detail": "Le fichier de ce document est introuvable sur le serveur "
+                           "(il a pu être perdu lors d'une maintenance). Demandez au "
+                           "propriétaire de le déposer à nouveau, ou téléversez un fichier."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except Exception as exc:  # noqa: BLE001
             return Response(
                 {"detail": f"OCR indisponible : {exc}"},

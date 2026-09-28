@@ -127,7 +127,7 @@ def generer_certificat(parcelle):
     txt.textLines(
         "Scannez le QR code ci-contre pour ouvrir la fiche\n"
         "publique de la parcelle et sa localisation sur la\n"
-        "carte. Aucune donnée privée n'est exposée."
+        "carte."
     )
     c.drawText(txt)
 

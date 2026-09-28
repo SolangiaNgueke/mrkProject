@@ -39,17 +39,48 @@ def notify_submission(parcelle):
 
 
 def notify_status_change(parcelle):
-    """Informe le propriétaire d'un changement de statut."""
+    """Informe le propriétaire d'un changement de statut.
+
+    Quand la parcelle est VALIDÉE, le Certificat de Vérification (PDF avec QR
+    code) est joint à l'email pour que le propriétaire le reçoive directement.
+    """
+    owner = parcelle.owner
+    if not owner or not getattr(owner, "email", ""):
+        return
+
     label = parcelle.get_status_display()
     detail = STATUS_MESSAGES.get(parcelle.status, "")
     subject = f"[Foncier] {parcelle.reference} — {label}"
+
+    est_validee = parcelle.status == parcelle.Status.VALIDATED
+    complement = (
+        "\nVotre Certificat de Vérification (PDF avec QR code) est joint à ce message. "
+        "Vous le retrouverez aussi dans « Mes parcelles ».\n"
+        if est_validee else ""
+    )
     body = (
-        f"Bonjour,\n\n{detail}\n\n"
+        f"Bonjour,\n\n{detail}\n{complement}\n"
         f"Référence : {parcelle.reference}\n"
         f"Nouveau statut : {label}\n\n"
         f"— Plateforme foncière"
     )
-    _send(parcelle.owner, subject, body)
+
+    # Cas validé : on joint le certificat PDF via EmailMessage.
+    if est_validee:
+        try:
+            from django.core.mail import EmailMessage
+
+            from .certificat import generer_certificat
+
+            nom, contenu = generer_certificat(parcelle)
+            msg = EmailMessage(subject, body, settings.DEFAULT_FROM_EMAIL, [owner.email])
+            msg.attach(nom, contenu, "application/pdf")
+            msg.send(fail_silently=True)
+            return
+        except Exception:  # noqa: BLE001
+            pass  # en cas d'échec du PDF, on envoie au moins le texte
+
+    _send(owner, subject, body)
 
 
 def notify_admins_new_report(signalement):
