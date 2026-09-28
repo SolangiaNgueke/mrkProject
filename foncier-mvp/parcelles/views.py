@@ -117,6 +117,33 @@ class ParcelleViewSet(viewsets.ModelViewSet):
         serializer = ParcelleSubmitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        # Email OBLIGATOIRE pour déclarer : c'est le canal des notifications de
+        # suivi. Pas exigé à l'inscription, mais requis ici. Si le compte n'en a
+        # pas, on accepte celui fourni dans le formulaire et on l'enregistre.
+        user = request.user
+        if not (user.email or "").strip():
+            email_fourni = (request.data.get("email") or "").strip()
+            if not email_fourni:
+                return Response(
+                    {"detail": "Un email est requis pour déclarer une parcelle "
+                               "(vous recevrez les notifications de suivi).",
+                     "email_requis": True},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            from django.core.exceptions import ValidationError
+            from django.core.validators import validate_email
+
+            try:
+                validate_email(email_fourni)
+            except ValidationError:
+                return Response(
+                    {"detail": "Cette adresse email n'est pas valide.",
+                     "email_requis": True},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            user.email = email_fourni
+            user.save(update_fields=["email"])
+
         # Anti-doublon : un envoi répété (double-clic, requête relancée après une
         # coupure réseau) ne doit pas créer deux fois la même parcelle. On renvoie
         # celle qui vient d'être déclarée au même endroit par le même utilisateur.

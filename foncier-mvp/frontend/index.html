@@ -166,6 +166,12 @@
          2) Enregistrez, puis ajoutez vos documents.<br>
          <i>Une référence officielle est attribuée automatiquement.
          Le tracé du terrain sera réalisé par un géomètre.</i></p>
+      <!-- Email requis pour déclarer (affiché seulement si le compte n'en a pas) -->
+      <div id="declareEmailBox" style="display:none;margin:8px 0">
+        <label style="font-size:13px;color:#555">Votre email <span style="color:#b91c1c">*</span> (pour les notifications de suivi)</label>
+        <input id="declare-email" type="email" placeholder="vous@exemple.com"
+               style="width:100%;box-sizing:border-box;margin-top:4px" />
+      </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn-ghost" onclick="actionProtegee(this, useMyLocation)">📍 Ma position</button>
         <button class="btn-ghost" onclick="clearMarker()">Effacer le point</button>
@@ -263,6 +269,9 @@
         `👤 <b>${user.username}</b><br><span style="color:#6b7280;font-size:12px">${user.role_display}</span>`;
       document.getElementById("nav-compte-label").textContent = user.username;
       window.__userEmail = user.email || "";
+      // Champ email dans « Déclarer » : visible uniquement si le compte n'en a pas.
+      document.getElementById("declareEmailBox").style.display =
+        window.__userEmail ? "none" : "block";
       const geo = ["SURVEYOR", "ADMIN"].includes((user.role || "").toUpperCase()) || user.is_superuser;
       const notaire = ["NOTARY", "ADMIN"].includes((user.role || "").toUpperCase()) || user.is_superuser;
       const adm = ["ADMIN"].includes((user.role || "").toUpperCase()) || user.is_superuser;
@@ -668,12 +677,29 @@
     async function saveParcelle() {
       const point = currentPoint();
       if (!point) { setMsg("Indiquez d'abord votre localisation (clic sur la carte ou « Ma position »).", "warn"); return; }
+      // Email requis si le compte n'en a pas : on l'envoie avec la déclaration.
+      const emailBox = document.getElementById("declareEmailBox");
       const feature = { type: "Feature", geometry: point, properties: {} };
+      if (emailBox.style.display !== "none") {
+        const email = document.getElementById("declare-email").value.trim();
+        if (!email) { setMsg("Indiquez votre email : il sert à recevoir les notifications de suivi.", "warn"); return; }
+        feature.email = email;
+      }
       try {
         const res = await fetch(API, { method: "POST", headers: authHeaders(), body: JSON.stringify(feature) });
         if (res.status === 401) { setMsg("Connectez-vous pour enregistrer.", "warn"); return; }
         const d = await res.json();
-        if (!res.ok) { setMsg("Erreur : " + JSON.stringify(d), "warn"); return; }
+        if (!res.ok) {
+          // Le serveur demande un email : on révèle le champ.
+          if (d.email_requis) {
+            emailBox.style.display = "block";
+            setMsg(d.detail || "Un email est requis pour déclarer.", "warn");
+            return;
+          }
+          setMsg("Erreur : " + (d.detail || JSON.stringify(d)), "warn"); return;
+        }
+        // L'email vient d'être enregistré sur le compte : on masque le champ.
+        if (feature.email) { window.__userEmail = feature.email; emailBox.style.display = "none"; }
         lastParcelId = d.id;
         const ref = (d.properties && d.properties.reference) ? d.properties.reference : ("#" + d.id);
         let txt = d.doublon_evite

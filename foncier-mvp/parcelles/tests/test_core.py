@@ -451,3 +451,35 @@ class CertificatTests(BaseData):
         _auth(self.client, self.autre_citoyen)
         r = self.client.get(f"/api/parcelles/{p.id}/certificat/")
         self.assertEqual(r.status_code, 403)
+
+
+class EmailRequisDeclarationTests(BaseData):
+    """L'email est requis pour déclarer (mais pas à l'inscription)."""
+
+    def setUp(self):
+        super().setUp()
+        # Un citoyen SANS email.
+        self.sans_email = User.objects.create_user(
+            username="sansmail", password="pw", role=User.Role.CITIZEN
+        )
+
+    def test_declaration_refusee_sans_email(self):
+        _auth(self.client, self.sans_email)
+        r = self.client.post("/api/parcelles/", _point_feature(1.2, 6.1), format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertTrue(r.data.get("email_requis"))
+        self.assertEqual(Parcelle.objects.filter(owner=self.sans_email).count(), 0)
+
+    def test_declaration_avec_email_enregistre_l_email(self):
+        _auth(self.client, self.sans_email)
+        corps = _point_feature(1.2, 6.1)
+        corps["email"] = "nouveau@exemple.tg"
+        r = self.client.post("/api/parcelles/", corps, format="json")
+        self.assertEqual(r.status_code, 201)
+        self.sans_email.refresh_from_db()
+        self.assertEqual(self.sans_email.email, "nouveau@exemple.tg")
+
+    def test_declaration_ok_si_compte_a_deja_un_email(self):
+        _auth(self.client, self.citoyen)  # a déjà c@x.tg
+        r = self.client.post("/api/parcelles/", _point_feature(1.2, 6.1), format="json")
+        self.assertEqual(r.status_code, 201)
